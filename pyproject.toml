@@ -1,0 +1,44 @@
+[project]
+name = "benchling-agent"
+version = "0.1.0"
+description = "An AI agent that writes Benchling entries using Claude API, accessible via CLI or Discord"
+readme = "README.md"
+authors = [
+    { name = "Stephen Yu", email = "syu@gatebio.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic",
+    "benchling-sdk",
+    "click",
+    "discord-py",
+    "pydantic-settings",
+    "httpx",
+]
+
+[project.scripts]
+benchling-agent = "benchling_agent.interfaces.cli:cli"
+
+[build-system]
+requires = ["uv_build>=0.8.17,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "respx",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
