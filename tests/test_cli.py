@@ -1,31 +1,130 @@
 """Tests for the CLI interface."""
 
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
 from click.testing import CliRunner
 
+from benchling_agent.clients.benchling import EntryResult
+from benchling_agent.clients.claude import ClaudeResponse
 from benchling_agent.interfaces.cli import cli
 
 
-class TestCli:
-    def test_write_command_requires_prompt(self):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["write"])
-        assert result.exit_code != 0
-        assert "Missing option" in result.output or "required" in result.output.lower()
+def _stub_write_result():
+    result = MagicMock()
+    result.draft = ClaudeResponse(
+        content="<h1>PCR</h1>", model="claude-test", input_tokens=50, output_tokens=100
+    )
+    result.entry = EntryResult(
+        id="etr_123",
+        name="PCR Results",
+        folder_id="lib_f1",
+        web_url="https://test.benchling.com/entry/etr_123",
+    )
+    return result
 
-    def test_write_command_stub(self):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["write", "--prompt", "test prompt"])
-        assert result.exit_code == 0
-        assert "test prompt" in result.output
 
-    def test_research_command_stub(self):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["research", "--query", "test query"])
-        assert result.exit_code == 0
-        assert "test query" in result.output
+def _stub_research_result():
+    result = MagicMock()
+    result.response = ClaudeResponse(
+        content="CRISPR summary here.", model="claude-test", input_tokens=40, output_tokens=80
+    )
+    return result
 
+
+class TestCliHelp:
     def test_help(self):
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "Benchling Agent" in result.output
+
+    def test_write_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["write", "--help"])
+        assert result.exit_code == 0
+        assert "--prompt" in result.output
+        assert "--folder-id" in result.output
+
+    def test_research_help(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["research", "--help"])
+        assert result.exit_code == 0
+        assert "--query" in result.output
+
+
+class TestWriteCommand:
+    def test_requires_prompt(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["write", "--folder-id", "lib_f1"])
+        assert result.exit_code != 0
+
+    def test_requires_folder_id(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["write", "--prompt", "test"])
+        assert result.exit_code != 0
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_write_success(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.write_entry.return_value = _stub_write_result()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["write", "--prompt", "PCR experiment", "--folder-id", "lib_f1"]
+        )
+
+        assert result.exit_code == 0
+        assert "Entry created: PCR Results" in result.output
+        assert "etr_123" in result.output
+        assert "<h1>PCR</h1>" in result.output
+        mock_agent.write_entry.assert_called_once_with(
+            prompt="PCR experiment", folder_id="lib_f1", entry_name=None
+        )
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_write_with_name(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.write_entry.return_value = _stub_write_result()
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["write", "-p", "PCR experiment", "-f", "lib_f1", "-n", "My Entry"],
+        )
+
+        assert result.exit_code == 0
+        mock_agent.write_entry.assert_called_once_with(
+            prompt="PCR experiment", folder_id="lib_f1", entry_name="My Entry"
+        )
+
+
+class TestResearchCommand:
+    def test_requires_query(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["research"])
+        assert result.exit_code != 0
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_research_success(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.research.return_value = _stub_research_result()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["research", "--query", "CRISPR design"])
+
+        assert result.exit_code == 0
+        assert "CRISPR summary here." in result.output
+        mock_agent.research.assert_called_once_with("CRISPR design")
+
+
+class TestDiscordCommand:
+    def test_discord_stub(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["discord"])
+        assert result.exit_code == 0
+        assert "not yet implemented" in result.output.lower() or "stub" in result.output.lower()
