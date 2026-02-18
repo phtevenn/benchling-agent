@@ -18,7 +18,7 @@ from enum import Enum
 
 from benchling_agent.clients.benchling import BenchlingClient, EntryResult
 from benchling_agent.clients.browser import BenchlingBrowser
-from benchling_agent.clients.claude import ClaudeClient, ClaudeResponse
+from benchling_agent.clients.claude import ClaudeClient, ClaudeResponse, EntryDraft
 from benchling_agent.config import Settings, get_settings
 from benchling_agent.user_config import UserConfig
 
@@ -34,7 +34,7 @@ class Action(str, Enum):
 class WriteResult:
     """Result of a write action: the drafted content + the created entry."""
 
-    draft: ClaudeResponse
+    draft: EntryDraft
     entry: EntryResult
     body_written: bool = False
 
@@ -88,10 +88,9 @@ class Agent:
         return folder
 
     @staticmethod
-    def _make_entry_name(prompt: str, entry_name: str | None = None) -> str:
+    def _make_entry_name(title: str) -> str:
         today = date.today().strftime("%Y.%m.%d")
-        label = entry_name or prompt[:60].strip()
-        return f"{today} - {label}"
+        return f"{today} - {title}"
 
     def write_entry(
         self,
@@ -101,19 +100,19 @@ class Agent:
     ) -> WriteResult:
         """Draft content with Claude, then create a Benchling entry.
 
+        Claude generates both the title and body in a single API call.
         The entry title is always prefixed with today's date (yyyy.mm.dd).
-        Claude drafts the body content which is returned in the result
-        (the Benchling API does not support writing entry body directly).
 
         Args:
             prompt: Natural-language description of the entry to write.
             folder_id: Benchling folder ID; falls back to configured default.
-            entry_name: Optional explicit name; defaults to first 60 chars of prompt.
+            entry_name: Optional explicit name; if omitted, Claude generates one.
         """
         resolved_folder = self._resolve_folder_id(folder_id)
         draft = self.claude.draft_entry(prompt)
 
-        name = self._make_entry_name(prompt, entry_name)
+        title = entry_name or draft.title
+        name = self._make_entry_name(title)
         entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
 
         body_written = False
@@ -121,7 +120,7 @@ class Agent:
             browser = BenchlingBrowser(settings=self.settings)
             if browser.is_logged_in():
                 body_written = browser.write_entry_content(
-                    entry.web_url, draft.content
+                    entry.web_url, draft.body
                 )
             else:
                 logger.warning(

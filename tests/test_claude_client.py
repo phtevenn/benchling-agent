@@ -10,6 +10,8 @@ from benchling_agent.clients.claude import (
     SYSTEM_PROMPT,
     ClaudeClient,
     ClaudeResponse,
+    EntryDraft,
+    _parse_title_body,
 )
 from benchling_agent.config import Settings
 
@@ -51,25 +53,75 @@ class TestClaudeResponse:
         assert resp.output_tokens == 2
 
 
+class TestEntryDraft:
+    def test_fields(self):
+        draft = EntryDraft(
+            title="My Title", body="<h1>Body</h1>",
+            model="m", input_tokens=1, output_tokens=2,
+        )
+        assert draft.title == "My Title"
+        assert draft.body == "<h1>Body</h1>"
+
+
+class TestParseTitleBody:
+    def test_standard_format(self):
+        text = "TITLE: PCR Protocol\nBODY:\n<h1>Protocol</h1>"
+        title, body = _parse_title_body(text)
+        assert title == "PCR Protocol"
+        assert body == "<h1>Protocol</h1>"
+
+    def test_strips_quotes_from_title(self):
+        text = 'TITLE: "Quoted Title"\nBODY:\n<p>content</p>'
+        title, body = _parse_title_body(text)
+        assert title == "Quoted Title"
+
+    def test_multiline_body(self):
+        text = "TITLE: Test\nBODY:\n<h1>Header</h1>\n<p>Paragraph</p>"
+        title, body = _parse_title_body(text)
+        assert title == "Test"
+        assert "<h1>Header</h1>" in body
+        assert "<p>Paragraph</p>" in body
+
+    def test_fallback_no_separator(self):
+        text = "My Title\n<h1>Some content</h1>"
+        title, body = _parse_title_body(text)
+        assert title == "My Title"
+        assert body == "<h1>Some content</h1>"
+
+
 class TestClaudeClient:
     @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_draft_entry_calls_api(self, mock_anthropic_cls):
+    def test_draft_entry_returns_entry_draft(self, mock_anthropic_cls):
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response("<h1>PCR</h1>")
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: PCR Amplification\nBODY:\n<h1>PCR</h1>"
+        )
 
         client = ClaudeClient(settings=_make_settings())
         result = client.draft_entry("PCR experiment")
 
-        mock_client.messages.create.assert_called_once()
+        assert isinstance(result, EntryDraft)
+        assert result.title == "PCR Amplification"
+        assert result.body == "<h1>PCR</h1>"
+        assert result.input_tokens == 100
+        assert result.output_tokens == 200
+
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_draft_entry_calls_api_with_prompt(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: T\nBODY:\n<p>b</p>"
+        )
+
+        client = ClaudeClient(settings=_make_settings())
+        client.draft_entry("PCR experiment")
+
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert call_kwargs["system"] == SYSTEM_PROMPT
         assert call_kwargs["model"] == "claude-test"
         assert "PCR experiment" in call_kwargs["messages"][0]["content"]
-
-        assert result.content == "<h1>PCR</h1>"
-        assert result.input_tokens == 100
-        assert result.output_tokens == 200
 
     @patch("benchling_agent.clients.claude.anthropic.Anthropic")
     def test_research_calls_api(self, mock_anthropic_cls):
@@ -88,7 +140,9 @@ class TestClaudeClient:
     def test_draft_entry_uses_entry_template(self, mock_anthropic_cls):
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response()
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: T\nBODY:\nb"
+        )
 
         client = ClaudeClient(settings=_make_settings())
         client.draft_entry("my experiment")
@@ -114,7 +168,9 @@ class TestClaudeClient:
     def test_custom_max_tokens(self, mock_anthropic_cls):
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response()
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: T\nBODY:\nb"
+        )
 
         client = ClaudeClient(settings=_make_settings())
         client.draft_entry("test", max_tokens=1024)

@@ -20,9 +20,12 @@ SYSTEM_PROMPT = (
 )
 
 ENTRY_PROMPT_TEMPLATE = (
-    "Write a Benchling notebook entry based on the following description. "
-    "Return ONLY the HTML body content (no <html>/<body> wrapper tags). "
-    "Use appropriate headings, lists, and tables where helpful.\n\n"
+    "Write a Benchling notebook entry based on the following description.\n\n"
+    "Return your response in EXACTLY this format:\n"
+    "TITLE: <a short descriptive title, under 80 characters>\n"
+    "BODY:\n"
+    "<the HTML body content (no <html>/<body> wrapper tags), using appropriate "
+    "headings, lists, and tables where helpful>\n\n"
     "Description: {prompt}"
 )
 
@@ -33,12 +36,25 @@ RESEARCH_PROMPT_TEMPLATE = (
     "Topic: {query}"
 )
 
+TITLE_BODY_SEPARATOR = "BODY:"
+
 
 @dataclass
 class ClaudeResponse:
     """Structured response from Claude."""
 
     content: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+
+
+@dataclass
+class EntryDraft:
+    """Title + body from a single Claude call."""
+
+    title: str
+    body: str
     model: str
     input_tokens: int
     output_tokens: int
@@ -68,12 +84,38 @@ class ClaudeClient:
             output_tokens=response.usage.output_tokens,
         )
 
-    def draft_entry(self, prompt: str, max_tokens: int = 4096) -> ClaudeResponse:
-        """Generate HTML content for a Benchling notebook entry."""
+    def draft_entry(self, prompt: str, max_tokens: int = 4096) -> EntryDraft:
+        """Generate a title and HTML body for a Benchling notebook entry."""
         user_message = ENTRY_PROMPT_TEMPLATE.format(prompt=prompt)
-        return self._send(user_message, max_tokens=max_tokens)
+        response = self._send(user_message, max_tokens=max_tokens)
+        title, body = _parse_title_body(response.content)
+        return EntryDraft(
+            title=title,
+            body=body,
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+        )
 
     def research(self, query: str, max_tokens: int = 4096) -> ClaudeResponse:
         """Research a topic and return a summary."""
         user_message = RESEARCH_PROMPT_TEMPLATE.format(query=query)
         return self._send(user_message, max_tokens=max_tokens)
+
+
+def _parse_title_body(text: str) -> tuple[str, str]:
+    """Parse 'TITLE: ...\nBODY:\n...' format into (title, body)."""
+    if TITLE_BODY_SEPARATOR in text:
+        before, body = text.split(TITLE_BODY_SEPARATOR, 1)
+        title_line = before.strip()
+        if title_line.upper().startswith("TITLE:"):
+            title_line = title_line[6:]
+        title = title_line.strip().strip('"').strip("'")
+        return title, body.strip()
+    # Fallback: couldn't parse — use first line as title, rest as body
+    lines = text.strip().splitlines()
+    title = lines[0].strip().strip('"').strip("'")
+    if title.upper().startswith("TITLE:"):
+        title = title[6:].strip()
+    body = "\n".join(lines[1:]).strip()
+    return title, body

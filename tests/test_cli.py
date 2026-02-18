@@ -7,14 +7,15 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 from benchling_agent.clients.benchling import EntryResult
-from benchling_agent.clients.claude import ClaudeResponse
+from benchling_agent.clients.claude import ClaudeResponse, EntryDraft
 from benchling_agent.interfaces.cli import cli
 
 
 def _stub_write_result(body_written: bool = False):
     result = MagicMock()
-    result.draft = ClaudeResponse(
-        content="<h1>PCR</h1>", model="claude-test", input_tokens=50, output_tokens=100
+    result.draft = EntryDraft(
+        title="PCR Results", body="<h1>PCR</h1>",
+        model="claude-test", input_tokens=50, output_tokens=100,
     )
     result.entry = EntryResult(
         id="etr_123",

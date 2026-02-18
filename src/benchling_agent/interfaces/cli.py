@@ -39,7 +39,7 @@ def write(prompt: str, folder_id: str | None, name: str | None) -> None:
     else:
         click.echo("  Body not written (run 'benchling-agent login' first).")
         click.echo("\n--- Draft body (paste into entry) ---")
-        click.echo(result.draft.content)
+        click.echo(result.draft.body)
 
 
 @cli.command()
