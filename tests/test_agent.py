@@ -183,9 +183,10 @@ class TestAgent:
 
 
 class TestConfigureFolder:
+    @patch("benchling_agent.user_config.UserConfig.save")
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
-    def test_configure_single_match(self, mock_claude_cls, mock_benchling_cls, tmp_path):
+    def test_configure_single_match(self, mock_claude_cls, mock_benchling_cls, mock_save):
         mock_benchling = MagicMock()
         mock_benchling_cls.return_value = mock_benchling
         mock_benchling.list_folders.return_value = [
@@ -200,6 +201,7 @@ class TestConfigureFolder:
         assert result["name"] == "Stephen Yu"
         assert agent.user_config.default_folder_id == "lib_abc"
         assert agent.user_config.default_folder_name == "Stephen Yu"
+        mock_save.assert_called_once()
 
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
