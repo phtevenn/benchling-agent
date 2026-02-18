@@ -28,7 +28,7 @@ def _make_settings(**overrides) -> Settings:
     return Settings(**defaults)
 
 
-def _mock_anthropic_response(text: str = "<h1>Test</h1>", model: str = "claude-test"):
+def _mock_anthropic_response(text: str = "# Test", model: str = "claude-test"):
     """Build a mock Anthropic Messages response."""
     content_block = MagicMock()
     content_block.text = text
@@ -56,37 +56,37 @@ class TestClaudeResponse:
 class TestEntryDraft:
     def test_fields(self):
         draft = EntryDraft(
-            title="My Title", body="<h1>Body</h1>",
+            title="My Title", body="# Body",
             model="m", input_tokens=1, output_tokens=2,
         )
         assert draft.title == "My Title"
-        assert draft.body == "<h1>Body</h1>"
+        assert draft.body == "# Body"
 
 
 class TestParseTitleBody:
     def test_standard_format(self):
-        text = "TITLE: PCR Protocol\nBODY:\n<h1>Protocol</h1>"
+        text = "TITLE: PCR Protocol\nBODY:\n# Protocol\nSome details."
         title, body = _parse_title_body(text)
         assert title == "PCR Protocol"
-        assert body == "<h1>Protocol</h1>"
+        assert body == "# Protocol\nSome details."
 
     def test_strips_quotes_from_title(self):
-        text = 'TITLE: "Quoted Title"\nBODY:\n<p>content</p>'
+        text = 'TITLE: "Quoted Title"\nBODY:\nSome content'
         title, body = _parse_title_body(text)
         assert title == "Quoted Title"
 
     def test_multiline_body(self):
-        text = "TITLE: Test\nBODY:\n<h1>Header</h1>\n<p>Paragraph</p>"
+        text = "TITLE: Test\nBODY:\n# Header\nParagraph text"
         title, body = _parse_title_body(text)
         assert title == "Test"
-        assert "<h1>Header</h1>" in body
-        assert "<p>Paragraph</p>" in body
+        assert "# Header" in body
+        assert "Paragraph text" in body
 
     def test_fallback_no_separator(self):
-        text = "My Title\n<h1>Some content</h1>"
+        text = "My Title\n# Some content"
         title, body = _parse_title_body(text)
         assert title == "My Title"
-        assert body == "<h1>Some content</h1>"
+        assert body == "# Some content"
 
 
 class TestClaudeClient:
@@ -95,7 +95,7 @@ class TestClaudeClient:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: PCR Amplification\nBODY:\n<h1>PCR</h1>"
+            "TITLE: PCR Amplification\nBODY:\n# PCR Protocol\n- Step 1"
         )
 
         client = ClaudeClient(settings=_make_settings())
@@ -103,7 +103,7 @@ class TestClaudeClient:
 
         assert isinstance(result, EntryDraft)
         assert result.title == "PCR Amplification"
-        assert result.body == "<h1>PCR</h1>"
+        assert "# PCR Protocol" in result.body
         assert result.input_tokens == 100
         assert result.output_tokens == 200
 
@@ -112,7 +112,7 @@ class TestClaudeClient:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\n<p>b</p>"
+            "TITLE: T\nBODY:\nSome body text"
         )
 
         client = ClaudeClient(settings=_make_settings())
@@ -141,7 +141,7 @@ class TestClaudeClient:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\nb"
+            "TITLE: T\nBODY:\nBody text"
         )
 
         client = ClaudeClient(settings=_make_settings())
@@ -169,7 +169,7 @@ class TestClaudeClient:
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\nb"
+            "TITLE: T\nBODY:\nBody text"
         )
 
         client = ClaudeClient(settings=_make_settings())

@@ -25,7 +25,7 @@ def _make_settings() -> Settings:
 
 
 def _stub_entry_draft(
-    title: str = "Generated Title", body: str = "<h1>Draft</h1>"
+    title: str = "Generated Title", body: str = "# Draft\nSome content"
 ) -> EntryDraft:
     return EntryDraft(
         title=title, body=body,
@@ -61,7 +61,7 @@ class TestAgent:
     ):
         mock_claude = MagicMock()
         mock_claude_cls.return_value = mock_claude
-        mock_claude.draft_entry.return_value = _stub_entry_draft(body="<h1>PCR</h1>")
+        mock_claude.draft_entry.return_value = _stub_entry_draft(body="# PCR Protocol")
 
         mock_benchling = MagicMock()
         mock_benchling_cls.return_value = mock_benchling
@@ -80,7 +80,7 @@ class TestAgent:
         )
 
         assert isinstance(result, WriteResult)
-        assert result.draft.body == "<h1>PCR</h1>"
+        assert result.draft.body == "# PCR Protocol"
         assert result.body_written is True
 
         today = date.today().strftime("%Y.%m.%d")

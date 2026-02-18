@@ -15,7 +15,7 @@ from benchling_agent.config import Settings
 SYSTEM_PROMPT = (
     "You are a scientific research assistant that helps write Benchling notebook entries. "
     "You produce well-structured, precise, and reproducible experimental documentation. "
-    "When asked to write an entry, output valid HTML suitable for a Benchling notebook entry body. "
+    "When asked to write an entry, output structured markdown content. "
     "When asked to research a topic, provide a clear summary with key findings."
 )
 
@@ -24,8 +24,14 @@ ENTRY_PROMPT_TEMPLATE = (
     "Return your response in EXACTLY this format:\n"
     "TITLE: <a short descriptive title, under 80 characters>\n"
     "BODY:\n"
-    "<the HTML body content (no <html>/<body> wrapper tags), using appropriate "
-    "headings, lists, and tables where helpful>\n\n"
+    "<the body in markdown format>\n\n"
+    "Formatting rules for the body:\n"
+    "- Use # for Header 1, ## for Header 2, ### for Subheader\n"
+    "- Use **bold** for emphasis (e.g. section labels like **Purpose:**)\n"
+    "- Use - for bullet lists; indent with 2 spaces per nesting level\n"
+    "- Use markdown tables with | column | separators | and a header row\n"
+    "- Use blank lines to separate paragraphs and sections\n"
+    "- Do NOT use HTML tags\n\n"
     "Description: {prompt}"
 )
 
@@ -85,7 +91,7 @@ class ClaudeClient:
         )
 
     def draft_entry(self, prompt: str, max_tokens: int = 4096) -> EntryDraft:
-        """Generate a title and HTML body for a Benchling notebook entry."""
+        """Generate a title and markdown body for a Benchling notebook entry."""
         user_message = ENTRY_PROMPT_TEMPLATE.format(prompt=prompt)
         response = self._send(user_message, max_tokens=max_tokens)
         title, body = _parse_title_body(response.content)
