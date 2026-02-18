@@ -111,9 +111,8 @@ class TestBenchlingClient:
     def test_list_entries(self, mock_benchling_cls):
         mock_sdk = MagicMock()
         mock_benchling_cls.return_value = mock_sdk
-        mock_sdk.entries.list_entries.return_value = iter(
-            [_mock_entry(id="etr_1"), _mock_entry(id="etr_2")]
-        )
+        page = [_mock_entry(id="etr_1"), _mock_entry(id="etr_2")]
+        mock_sdk.entries.list_entries.return_value = iter([page])
 
         client = BenchlingClient(settings=_make_settings())
         results = client.list_entries(max_results=5)
@@ -126,14 +125,27 @@ class TestBenchlingClient:
     def test_list_entries_respects_max(self, mock_benchling_cls):
         mock_sdk = MagicMock()
         mock_benchling_cls.return_value = mock_sdk
-        mock_sdk.entries.list_entries.return_value = iter(
-            [_mock_entry(id=f"etr_{i}") for i in range(10)]
-        )
+        page = [_mock_entry(id=f"etr_{i}") for i in range(10)]
+        mock_sdk.entries.list_entries.return_value = iter([page])
 
         client = BenchlingClient(settings=_make_settings())
         results = client.list_entries(max_results=3)
 
         assert len(results) == 3
+
+    @patch("benchling_agent.clients.benchling.Benchling")
+    def test_list_entries_multiple_pages(self, mock_benchling_cls):
+        mock_sdk = MagicMock()
+        mock_benchling_cls.return_value = mock_sdk
+        page1 = [_mock_entry(id="etr_1"), _mock_entry(id="etr_2")]
+        page2 = [_mock_entry(id="etr_3")]
+        mock_sdk.entries.list_entries.return_value = iter([page1, page2])
+
+        client = BenchlingClient(settings=_make_settings())
+        results = client.list_entries(max_results=10)
+
+        assert len(results) == 3
+        assert [r.id for r in results] == ["etr_1", "etr_2", "etr_3"]
 
     @patch("benchling_agent.clients.benchling.Benchling")
     def test_list_folders(self, mock_benchling_cls):
@@ -143,7 +155,7 @@ class TestBenchlingClient:
         folder1 = MagicMock()
         folder1.id = "lib_f1"
         folder1.name = "My Project"
-        mock_sdk.folders.list.return_value = iter([folder1])
+        mock_sdk.folders.list.return_value = iter([[folder1]])
 
         client = BenchlingClient(settings=_make_settings())
         results = client.list_folders(name_includes="My")
