@@ -132,7 +132,11 @@ class BenchlingBrowser:
             return False
 
         logger.info("Waiting for editor to become ready...")
-        editor = page.locator('[contenteditable="true"]').first
+        body_selector = (
+            'div.editable[contenteditable="true"]'
+            ':not(.mediocre-titleEditor-titleEditable)'
+        )
+        editor = page.locator(body_selector).first
         editor.wait_for(state="visible", timeout=30_000)
         logger.info("Editor found, clicking to focus...")
 
@@ -144,15 +148,16 @@ class BenchlingBrowser:
         page.wait_for_timeout(500)
 
         injected = page.evaluate(
-            """(html) => {
-                const editor = document.querySelector('[contenteditable="true"]');
+            """(args) => {
+                const [selector, html] = args;
+                const editor = document.querySelector(selector);
                 if (!editor) return false;
                 editor.focus();
                 document.execCommand('selectAll', false, null);
                 document.execCommand('insertHTML', false, html);
                 return true;
             }""",
-            html_content,
+            [body_selector, html_content],
         )
         logger.info("Content injection result: %s", injected)
 

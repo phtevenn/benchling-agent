@@ -106,7 +106,7 @@ class TestBenchlingBrowser:
         mock_page.goto.assert_called_once()
         mock_page.evaluate.assert_called_once()
         call_args = mock_page.evaluate.call_args
-        assert "<h1>Test</h1>" in call_args.args
+        assert "<h1>Test</h1>" in call_args.args[1]
 
     @patch("playwright.sync_api.sync_playwright")
     def test_write_entry_content_redirected(self, mock_pw):
