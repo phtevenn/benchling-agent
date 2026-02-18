@@ -113,24 +113,37 @@ class BenchlingBrowser:
 
         Returns True if the content was successfully written.
         """
-        page = self._get_page()
-        logger.info("Navigating to entry: %s", entry_url)
-        page.goto(entry_url, wait_until="domcontentloaded")
-
-        page.wait_for_timeout(5000)
-
-        if self.settings.benchling_api_url not in page.url:
-            logger.warning("Redirected away from Benchling — session expired?")
+        if not STORAGE_STATE_PATH.exists():
+            logger.warning("No saved browser session. Run 'benchling-agent login' first.")
             return False
 
+        page = self._get_page()
+        logger.info("Navigating to entry: %s", entry_url)
+        page.goto(entry_url, wait_until="networkidle")
+
+        logger.info("Page loaded, URL: %s", page.url)
+
+        if self.settings.benchling_api_url not in page.url:
+            logger.warning(
+                "Redirected away from Benchling (url=%s) — session expired? "
+                "Run 'benchling-agent login' to re-authenticate.",
+                page.url,
+            )
+            return False
+
+        logger.info("Waiting for editor to become ready...")
         editor = page.locator('[contenteditable="true"]').first
-        editor.wait_for(state="visible", timeout=15_000)
+        editor.wait_for(state="visible", timeout=30_000)
+        logger.info("Editor found, clicking to focus...")
 
         editor.click()
+        page.wait_for_timeout(1000)
+
         mod = "Meta" if platform.system() == "Darwin" else "Control"
         page.keyboard.press(f"{mod}+A")
+        page.wait_for_timeout(500)
 
-        page.evaluate(
+        injected = page.evaluate(
             """(html) => {
                 const editor = document.querySelector('[contenteditable="true"]');
                 if (!editor) return false;
@@ -141,8 +154,14 @@ class BenchlingBrowser:
             }""",
             html_content,
         )
+        logger.info("Content injection result: %s", injected)
 
-        page.wait_for_timeout(2000)
+        if not injected:
+            logger.warning("Failed to inject content into editor.")
+            return False
 
-        logger.info("Content written to entry.")
+        logger.info("Waiting for Benchling autosave...")
+        page.wait_for_timeout(5000)
+
+        logger.info("Content written to entry successfully.")
         return True

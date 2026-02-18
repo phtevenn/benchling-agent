@@ -116,7 +116,7 @@ class TestAgent:
     @patch("benchling_agent.agent.BenchlingBrowser")
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
-    def test_write_entry_not_logged_in(
+    def test_write_entry_browser_fails(
         self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
     ):
         mock_claude = MagicMock()
@@ -129,13 +129,14 @@ class TestAgent:
 
         mock_browser = MagicMock()
         mock_browser_cls.return_value = mock_browser
-        mock_browser.is_logged_in.return_value = False
+        mock_browser.write_entry_content.return_value = False
 
         config = UserConfig(default_folder_id="lib_f1")
         agent = Agent(settings=_make_settings(), user_config=config)
         result = agent.write_entry(prompt="test")
 
         assert result.body_written is False
+        mock_browser.close.assert_called_once()
 
     @patch("benchling_agent.agent.BenchlingBrowser")
     @patch("benchling_agent.agent.BenchlingClient")

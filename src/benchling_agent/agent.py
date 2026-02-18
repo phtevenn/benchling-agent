@@ -116,20 +116,17 @@ class Agent:
         entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
 
         body_written = False
+        browser = None
         try:
             browser = BenchlingBrowser(settings=self.settings)
-            if browser.is_logged_in():
-                body_written = browser.write_entry_content(
-                    entry.web_url, draft.body
-                )
-            else:
-                logger.warning(
-                    "Not logged into Benchling in the browser. "
-                    "Run 'benchling-agent login' to authenticate."
-                )
-            browser.close()
+            body_written = browser.write_entry_content(
+                entry.web_url, draft.body
+            )
         except Exception:
             logger.warning("Browser automation failed; entry created without body.", exc_info=True)
+        finally:
+            if browser:
+                browser.close()
 
         return WriteResult(draft=draft, entry=entry, body_written=body_written)
 
