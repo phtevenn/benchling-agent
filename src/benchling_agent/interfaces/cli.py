@@ -33,10 +33,8 @@ def write(prompt: str, folder_id: str | None, name: str | None) -> None:
         raise SystemExit(1)
 
     click.echo(f"\nEntry created: {result.entry.name}")
-    click.echo(f"  ID:  {result.entry.id}")
     click.echo(f"  URL: {result.entry.web_url}")
-    click.echo(f"\nTokens used: {result.draft.input_tokens} in / {result.draft.output_tokens} out")
-    click.echo("\n--- Draft content ---")
+    click.echo("\n--- Draft body (paste into entry) ---")
     click.echo(result.draft.content)
 
 

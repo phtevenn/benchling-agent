@@ -125,8 +125,7 @@ class TestWriteCommand:
         mock_agent.write_entry.assert_called_once_with(prompt="PCR experiment")
         assert ctx.send.call_count == 2
         final_msg = ctx.send.call_args_list[1].args[0]
-        assert "PCR" in final_msg
-        assert "etr_1" in final_msg
+        assert "https://benchling.com/e/etr_1" in final_msg
 
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio

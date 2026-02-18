@@ -55,15 +55,7 @@ def create_bot(settings: Settings) -> commands.Bot:
         await ctx.send("Drafting entry with Claude...")
         try:
             result = agent.write_entry(prompt=prompt)
-            response = (
-                f"**Entry created:** {result.entry.name}\n"
-                f"**ID:** `{result.entry.id}`\n"
-                f"**URL:** {result.entry.web_url}\n"
-                f"**Tokens:** {result.draft.input_tokens} in / "
-                f"{result.draft.output_tokens} out\n\n"
-                f"**Draft:**\n```html\n{result.draft.content}\n```"
-            )
-            await ctx.send(_truncate(response))
+            await ctx.send(f"Entry created: {result.entry.web_url}")
         except ValueError as e:
             await ctx.send(f"Error: {e}")
         except Exception:

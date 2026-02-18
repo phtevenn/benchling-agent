@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -63,9 +64,11 @@ class TestAgent:
 
         assert isinstance(result, WriteResult)
         assert result.draft.content == "<h1>PCR</h1>"
-        assert result.entry.name == "PCR Results"
+
+        today = date.today().strftime("%Y.%m.%d")
+        expected_name = f"{today} - PCR Results"
         mock_benchling.create_entry.assert_called_once_with(
-            name="PCR Results", folder_id="lib_f1"
+            name=expected_name, folder_id="lib_f1"
         )
 
     @patch("benchling_agent.agent.BenchlingClient")
@@ -109,7 +112,9 @@ class TestAgent:
         agent.write_entry(prompt=prompt, folder_id="lib_f1")
 
         call_kwargs = mock_benchling.create_entry.call_args.kwargs
-        assert len(call_kwargs["name"]) == 60
+        today = date.today().strftime("%Y.%m.%d")
+        assert call_kwargs["name"].startswith(f"{today} - ")
+        assert call_kwargs["name"] == f"{today} - {'A' * 60}"
 
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
