@@ -11,7 +11,7 @@ from benchling_agent.clients.claude import ClaudeResponse
 from benchling_agent.interfaces.cli import cli
 
 
-def _stub_write_result():
+def _stub_write_result(body_written: bool = False):
     result = MagicMock()
     result.draft = ClaudeResponse(
         content="<h1>PCR</h1>", model="claude-test", input_tokens=50, output_tokens=100
@@ -22,6 +22,7 @@ def _stub_write_result():
         folder_id="lib_f1",
         web_url="https://test.benchling.com/entry/etr_123",
     )
+    result.body_written = body_written
     return result
 
 
@@ -74,6 +75,7 @@ class TestWriteCommand:
         assert result.exit_code == 0
         assert "Entry created: PCR Results" in result.output
         assert "https://test.benchling.com/entry/etr_123" in result.output
+        assert "Body not written" in result.output
         assert "<h1>PCR</h1>" in result.output
         mock_agent.write_entry.assert_called_once_with(
             prompt="PCR experiment", folder_id="lib_f1", entry_name=None

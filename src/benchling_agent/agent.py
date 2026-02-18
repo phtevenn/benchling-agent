@@ -11,14 +11,18 @@ classification layer up front.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 
 from benchling_agent.clients.benchling import BenchlingClient, EntryResult
+from benchling_agent.clients.browser import BenchlingBrowser
 from benchling_agent.clients.claude import ClaudeClient, ClaudeResponse
 from benchling_agent.config import Settings, get_settings
 from benchling_agent.user_config import UserConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Action(str, Enum):
@@ -32,6 +36,7 @@ class WriteResult:
 
     draft: ClaudeResponse
     entry: EntryResult
+    body_written: bool = False
 
 
 @dataclass
@@ -111,7 +116,23 @@ class Agent:
         name = self._make_entry_name(prompt, entry_name)
         entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
 
-        return WriteResult(draft=draft, entry=entry)
+        body_written = False
+        try:
+            browser = BenchlingBrowser(settings=self.settings)
+            if browser.is_logged_in():
+                body_written = browser.write_entry_content(
+                    entry.web_url, draft.content
+                )
+            else:
+                logger.warning(
+                    "Not logged into Benchling in the browser. "
+                    "Run 'benchling-agent login' to authenticate."
+                )
+            browser.close()
+        except Exception:
+            logger.warning("Browser automation failed; entry created without body.", exc_info=True)
+
+        return WriteResult(draft=draft, entry=entry, body_written=body_written)
 
     def research(self, query: str) -> ResearchResult:
         """Research a topic using Claude and return the summary."""

@@ -44,9 +44,12 @@ class TestAction:
 
 
 class TestAgent:
+    @patch("benchling_agent.agent.BenchlingBrowser")
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
-    def test_write_entry_with_explicit_folder(self, mock_claude_cls, mock_benchling_cls):
+    def test_write_entry_with_explicit_folder(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
         mock_claude = MagicMock()
         mock_claude_cls.return_value = mock_claude
         mock_claude.draft_entry.return_value = _stub_claude_response("<h1>PCR</h1>")
@@ -54,6 +57,11 @@ class TestAgent:
         mock_benchling = MagicMock()
         mock_benchling_cls.return_value = mock_benchling
         mock_benchling.create_entry.return_value = _stub_entry_result("PCR Results")
+
+        mock_browser = MagicMock()
+        mock_browser_cls.return_value = mock_browser
+        mock_browser.is_logged_in.return_value = True
+        mock_browser.write_entry_content.return_value = True
 
         agent = Agent(settings=_make_settings(), user_config=UserConfig())
         result = agent.write_entry(
@@ -64,6 +72,7 @@ class TestAgent:
 
         assert isinstance(result, WriteResult)
         assert result.draft.content == "<h1>PCR</h1>"
+        assert result.body_written is True
 
         today = date.today().strftime("%Y.%m.%d")
         expected_name = f"{today} - PCR Results"
@@ -71,9 +80,12 @@ class TestAgent:
             name=expected_name, folder_id="lib_f1"
         )
 
+    @patch("benchling_agent.agent.BenchlingBrowser")
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
-    def test_write_entry_uses_default_folder(self, mock_claude_cls, mock_benchling_cls):
+    def test_write_entry_not_logged_in(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
         mock_claude = MagicMock()
         mock_claude_cls.return_value = mock_claude
         mock_claude.draft_entry.return_value = _stub_claude_response()
@@ -81,6 +93,32 @@ class TestAgent:
         mock_benchling = MagicMock()
         mock_benchling_cls.return_value = mock_benchling
         mock_benchling.create_entry.return_value = _stub_entry_result()
+
+        mock_browser = MagicMock()
+        mock_browser_cls.return_value = mock_browser
+        mock_browser.is_logged_in.return_value = False
+
+        config = UserConfig(default_folder_id="lib_f1")
+        agent = Agent(settings=_make_settings(), user_config=config)
+        result = agent.write_entry(prompt="test")
+
+        assert result.body_written is False
+
+    @patch("benchling_agent.agent.BenchlingBrowser")
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_write_entry_uses_default_folder(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
+        mock_claude = MagicMock()
+        mock_claude_cls.return_value = mock_claude
+        mock_claude.draft_entry.return_value = _stub_claude_response()
+
+        mock_benchling = MagicMock()
+        mock_benchling_cls.return_value = mock_benchling
+        mock_benchling.create_entry.return_value = _stub_entry_result()
+
+        mock_browser_cls.return_value = MagicMock(is_logged_in=MagicMock(return_value=False))
 
         config = UserConfig(default_folder_id="lib_default")
         agent = Agent(settings=_make_settings(), user_config=config)
@@ -96,9 +134,12 @@ class TestAgent:
         with pytest.raises(ValueError, match="No folder specified"):
             agent.write_entry(prompt="test")
 
+    @patch("benchling_agent.agent.BenchlingBrowser")
     @patch("benchling_agent.agent.BenchlingClient")
     @patch("benchling_agent.agent.ClaudeClient")
-    def test_write_entry_default_name(self, mock_claude_cls, mock_benchling_cls):
+    def test_write_entry_default_name(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
         mock_claude = MagicMock()
         mock_claude_cls.return_value = mock_claude
         mock_claude.draft_entry.return_value = _stub_claude_response()
@@ -106,6 +147,8 @@ class TestAgent:
         mock_benchling = MagicMock()
         mock_benchling_cls.return_value = mock_benchling
         mock_benchling.create_entry.return_value = _stub_entry_result()
+
+        mock_browser_cls.return_value = MagicMock(is_logged_in=MagicMock(return_value=False))
 
         agent = Agent(settings=_make_settings(), user_config=UserConfig())
         prompt = "A" * 100
