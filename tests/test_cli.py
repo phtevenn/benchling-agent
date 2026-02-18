@@ -73,7 +73,7 @@ class TestWriteCommand:
 
         assert result.exit_code == 0
         assert "Entry created: PCR Results" in result.output
-        assert "etr_123" in result.output
+        assert "https://test.benchling.com/entry/etr_123" in result.output
         assert "<h1>PCR</h1>" in result.output
         mock_agent.write_entry.assert_called_once_with(
             prompt="PCR experiment", folder_id="lib_f1", entry_name=None

@@ -12,6 +12,7 @@ classification layer up front.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 
 from benchling_agent.clients.benchling import BenchlingClient, EntryResult
@@ -81,6 +82,12 @@ class Agent:
         self.user_config.save()
         return folder
 
+    @staticmethod
+    def _make_entry_name(prompt: str, entry_name: str | None = None) -> str:
+        today = date.today().strftime("%Y.%m.%d")
+        label = entry_name or prompt[:60].strip()
+        return f"{today} - {label}"
+
     def write_entry(
         self,
         prompt: str,
@@ -88,6 +95,10 @@ class Agent:
         entry_name: str | None = None,
     ) -> WriteResult:
         """Draft content with Claude, then create a Benchling entry.
+
+        The entry title is always prefixed with today's date (yyyy.mm.dd).
+        Claude drafts the body content which is returned in the result
+        (the Benchling API does not support writing entry body directly).
 
         Args:
             prompt: Natural-language description of the entry to write.
@@ -97,7 +108,7 @@ class Agent:
         resolved_folder = self._resolve_folder_id(folder_id)
         draft = self.claude.draft_entry(prompt)
 
-        name = entry_name or prompt[:60].strip()
+        name = self._make_entry_name(prompt, entry_name)
         entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
 
         return WriteResult(draft=draft, entry=entry)
