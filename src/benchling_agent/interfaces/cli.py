@@ -34,8 +34,12 @@ def write(prompt: str, folder_id: str | None, name: str | None) -> None:
 
     click.echo(f"\nEntry created: {result.entry.name}")
     click.echo(f"  URL: {result.entry.web_url}")
-    click.echo("\n--- Draft body (paste into entry) ---")
-    click.echo(result.draft.content)
+    if result.body_written:
+        click.echo("  Body written via browser automation.")
+    else:
+        click.echo("  Body not written (run 'benchling-agent login' first).")
+        click.echo("\n--- Draft body (paste into entry) ---")
+        click.echo(result.draft.content)
 
 
 @cli.command()
@@ -49,6 +53,24 @@ def configure(folder: str) -> None:
         click.echo(f"Error: {e}")
         raise SystemExit(1)
     click.echo(f"Default folder set to: {result['name']} ({result['id']})")
+
+
+@cli.command()
+def login() -> None:
+    """Log into Benchling via browser for entry body writing."""
+    from benchling_agent.clients.browser import BenchlingBrowser
+
+    settings = get_settings()
+    click.echo("Opening browser for Benchling login...")
+    click.echo("Please log in via your SSO provider. The session will be saved.")
+    browser = BenchlingBrowser(settings=settings, headless=False)
+    success = browser.login()
+    browser.close()
+    if success:
+        click.echo("Login successful — browser session saved.")
+    else:
+        click.echo("Login failed or timed out. Try again.")
+        raise SystemExit(1)
 
 
 @cli.command()

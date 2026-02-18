@@ -55,7 +55,8 @@ def create_bot(settings: Settings) -> commands.Bot:
         await ctx.send("Drafting entry with Claude...")
         try:
             result = agent.write_entry(prompt=prompt)
-            await ctx.send(f"Entry created: {result.entry.web_url}")
+            status = "body written" if result.body_written else "body pending — run `login` on CLI"
+            await ctx.send(f"Entry created ({status}): {result.entry.web_url}")
         except ValueError as e:
             await ctx.send(f"Error: {e}")
         except Exception:

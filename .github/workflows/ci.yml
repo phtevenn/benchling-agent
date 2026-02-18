@@ -21,4 +21,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
+      - run: uv run playwright install --with-deps chromium
       - run: uv run pytest --cov=benchling_agent --cov-report=term-missing -v
