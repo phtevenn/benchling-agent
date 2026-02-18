@@ -123,8 +123,25 @@ class TestResearchCommand:
 
 
 class TestDiscordCommand:
-    def test_discord_stub(self):
+    def test_discord_requires_token(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["discord"])
+        assert result.exit_code == 1
+        assert "DISCORD_BOT_TOKEN" in result.output
+
+    @patch("benchling_agent.interfaces.cli.get_settings")
+    @patch("benchling_agent.interfaces.discord_bot.run_bot")
+    def test_discord_starts_bot(self, mock_run_bot, mock_get_settings):
+        from benchling_agent.config import Settings
+
+        mock_get_settings.return_value = Settings(
+            _env_file=None,
+            anthropic_api_key="k",
+            benchling_api_url="https://x.benchling.com",
+            benchling_api_key="sk",
+            discord_bot_token="tok_test",
+        )
         runner = CliRunner()
         result = runner.invoke(cli, ["discord"])
         assert result.exit_code == 0
-        assert "not yet implemented" in result.output.lower() or "stub" in result.output.lower()
+        assert "Starting Discord bot" in result.output

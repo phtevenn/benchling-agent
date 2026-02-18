@@ -53,4 +53,11 @@ def research(query: str) -> None:
 @cli.command()
 def discord() -> None:
     """Start the Discord bot."""
-    click.echo("[stub] Discord bot not yet implemented. See feat/discord-bot.")
+    from benchling_agent.interfaces.discord_bot import run_bot
+
+    settings = get_settings()
+    if not settings.discord_bot_token:
+        click.echo("Error: DISCORD_BOT_TOKEN is not set. See .env.example.")
+        raise SystemExit(1)
+    click.echo("Starting Discord bot...")
+    run_bot(settings)
