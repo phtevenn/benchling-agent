@@ -123,7 +123,17 @@ class TestResearchCommand:
 
 
 class TestDiscordCommand:
-    def test_discord_requires_token(self):
+    @patch("benchling_agent.interfaces.cli.get_settings")
+    def test_discord_requires_token(self, mock_get_settings):
+        from benchling_agent.config import Settings
+
+        mock_get_settings.return_value = Settings(
+            _env_file=None,
+            anthropic_api_key="",
+            benchling_api_url="",
+            benchling_api_key="",
+            discord_bot_token="",
+        )
         runner = CliRunner()
         result = runner.invoke(cli, ["discord"])
         assert result.exit_code == 1

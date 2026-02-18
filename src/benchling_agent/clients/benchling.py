@@ -107,9 +107,10 @@ class BenchlingClient:
 
         results: list[EntryResult] = []
         for page in self._client.entries.list_entries(**kwargs):
-            results.append(_entry_to_result(page))
-            if len(results) >= max_results:
-                break
+            for entry in page:
+                results.append(_entry_to_result(entry))
+                if len(results) >= max_results:
+                    return results
         return results
 
     def list_folders(self, *, name_includes: str | None = None) -> list[dict]:
@@ -119,6 +120,7 @@ class BenchlingClient:
             kwargs["name_includes"] = name_includes
 
         folders = []
-        for folder in self._client.folders.list(**kwargs):
-            folders.append({"id": folder.id, "name": folder.name})
+        for page in self._client.folders.list(**kwargs):
+            for folder in page:
+                folders.append({"id": folder.id, "name": folder.name})
         return folders
