@@ -8,6 +8,7 @@ Commands:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord
@@ -42,7 +43,7 @@ def create_bot(settings: Settings) -> commands.Bot:
     @bot.command(name="configure", help="Set default folder: !configure <folder name>")
     async def configure_folder(ctx: commands.Context, *, folder_name: str) -> None:
         try:
-            result = agent.configure_folder(folder_name)
+            result = await asyncio.to_thread(agent.configure_folder, folder_name)
             await ctx.send(f"Default folder set to: **{result['name']}** (`{result['id']}`)")
         except ValueError as e:
             await ctx.send(f"Error: {e}")
@@ -54,7 +55,7 @@ def create_bot(settings: Settings) -> commands.Bot:
     async def write_entry(ctx: commands.Context, *, prompt: str) -> None:
         await ctx.send("Drafting entry with Claude...")
         try:
-            result = agent.write_entry(prompt=prompt)
+            result = await asyncio.to_thread(agent.write_entry, prompt=prompt)
             status = "body written" if result.body_written else "body pending — run `login` on CLI"
             await ctx.send(f"Entry created ({status}): {result.entry.web_url}")
         except ValueError as e:
@@ -67,7 +68,7 @@ def create_bot(settings: Settings) -> commands.Bot:
     async def research_topic(ctx: commands.Context, *, query: str) -> None:
         await ctx.send("Researching with Claude...")
         try:
-            result = agent.research(query)
+            result = await asyncio.to_thread(agent.research, query)
             response = (
                 f"**Tokens:** {result.response.input_tokens} in / "
                 f"{result.response.output_tokens} out\n\n"
