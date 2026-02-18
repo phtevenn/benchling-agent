@@ -56,11 +56,48 @@ class TestCreateBot:
         command_names = [cmd.name for cmd in bot.commands]
         assert "write" in command_names
         assert "research" in command_names
+        assert "configure" in command_names
 
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     def test_bot_prefix(self, mock_agent_cls):
         bot = create_bot(_make_settings())
         assert "!" in bot.command_prefix
+
+
+class TestConfigureCommand:
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_configure_command(self, mock_agent_cls):
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+        mock_agent.configure_folder.return_value = {"id": "lib_abc", "name": "Stephen Yu"}
+
+        bot = create_bot(_make_settings())
+        cmd = bot.get_command("configure")
+
+        ctx = AsyncMock()
+        await cmd.callback(ctx, folder_name="Stephen Yu")
+
+        mock_agent.configure_folder.assert_called_once_with("Stephen Yu")
+        msg = ctx.send.call_args.args[0]
+        assert "Stephen Yu" in msg
+        assert "lib_abc" in msg
+
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_configure_no_match(self, mock_agent_cls):
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+        mock_agent.configure_folder.side_effect = ValueError("No folders found")
+
+        bot = create_bot(_make_settings())
+        cmd = bot.get_command("configure")
+
+        ctx = AsyncMock()
+        await cmd.callback(ctx, folder_name="Nope")
+
+        msg = ctx.send.call_args.args[0]
+        assert "No folders found" in msg
 
 
 class TestWriteCommand:
@@ -83,13 +120,29 @@ class TestWriteCommand:
         write_cmd = bot.get_command("write")
 
         ctx = AsyncMock()
-        await write_cmd.callback(ctx, folder_id="f1", prompt="PCR experiment")
+        await write_cmd.callback(ctx, prompt="PCR experiment")
 
-        mock_agent.write_entry.assert_called_once_with(prompt="PCR experiment", folder_id="f1")
+        mock_agent.write_entry.assert_called_once_with(prompt="PCR experiment")
         assert ctx.send.call_count == 2
         final_msg = ctx.send.call_args_list[1].args[0]
         assert "PCR" in final_msg
         assert "etr_1" in final_msg
+
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_write_no_folder_configured(self, mock_agent_cls):
+        mock_agent = MagicMock()
+        mock_agent_cls.return_value = mock_agent
+        mock_agent.write_entry.side_effect = ValueError("No folder specified")
+
+        bot = create_bot(_make_settings())
+        write_cmd = bot.get_command("write")
+
+        ctx = AsyncMock()
+        await write_cmd.callback(ctx, prompt="test")
+
+        final_msg = ctx.send.call_args_list[-1].args[0]
+        assert "No folder specified" in final_msg
 
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
@@ -102,7 +155,7 @@ class TestWriteCommand:
         write_cmd = bot.get_command("write")
 
         ctx = AsyncMock()
-        await write_cmd.callback(ctx, folder_id="f1", prompt="test")
+        await write_cmd.callback(ctx, prompt="test")
 
         final_msg = ctx.send.call_args_list[-1].args[0]
         assert "wrong" in final_msg.lower()

@@ -17,6 +17,7 @@ from enum import Enum
 from benchling_agent.clients.benchling import BenchlingClient, EntryResult
 from benchling_agent.clients.claude import ClaudeClient, ClaudeResponse
 from benchling_agent.config import Settings, get_settings
+from benchling_agent.user_config import UserConfig
 
 
 class Action(str, Enum):
@@ -44,6 +45,7 @@ class Agent:
     """Orchestrates Claude and Benchling clients to fulfil user requests."""
 
     settings: Settings = field(default_factory=get_settings)
+    user_config: UserConfig = field(default_factory=UserConfig.load)
     claude: ClaudeClient = field(init=False)
     benchling: BenchlingClient = field(init=False)
 
@@ -51,23 +53,52 @@ class Agent:
         self.claude = ClaudeClient(settings=self.settings)
         self.benchling = BenchlingClient(settings=self.settings)
 
+    def _resolve_folder_id(self, folder_id: str | None) -> str:
+        """Return an explicit folder_id, or fall back to the configured default."""
+        if folder_id:
+            return folder_id
+        if self.user_config.default_folder_id:
+            return self.user_config.default_folder_id
+        raise ValueError(
+            "No folder specified and no default configured. "
+            "Run 'benchling-agent configure' first."
+        )
+
+    def configure_folder(self, folder_name: str) -> dict:
+        """Look up a folder by name and save it as the default."""
+        folders = self.benchling.list_folders(name_includes=folder_name)
+        if not folders:
+            raise ValueError(f"No folders found matching '{folder_name}'")
+        if len(folders) > 1:
+            names = ", ".join(f"'{f['name']}'" for f in folders)
+            raise ValueError(
+                f"Multiple folders match '{folder_name}': {names}. "
+                "Please be more specific."
+            )
+        folder = folders[0]
+        self.user_config.default_folder_id = folder["id"]
+        self.user_config.default_folder_name = folder["name"]
+        self.user_config.save()
+        return folder
+
     def write_entry(
         self,
         prompt: str,
-        folder_id: str,
+        folder_id: str | None = None,
         entry_name: str | None = None,
     ) -> WriteResult:
         """Draft content with Claude, then create a Benchling entry.
 
         Args:
             prompt: Natural-language description of the entry to write.
-            folder_id: Benchling folder ID to create the entry in.
+            folder_id: Benchling folder ID; falls back to configured default.
             entry_name: Optional explicit name; defaults to first 60 chars of prompt.
         """
+        resolved_folder = self._resolve_folder_id(folder_id)
         draft = self.claude.draft_entry(prompt)
 
         name = entry_name or prompt[:60].strip()
-        entry = self.benchling.create_entry(name=name, folder_id=folder_id)
+        entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
 
         return WriteResult(draft=draft, entry=entry)
 
