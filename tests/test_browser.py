@@ -92,13 +92,15 @@ class TestBenchlingBrowser:
         browser = BenchlingBrowser(settings=_make_settings())
         assert browser.is_logged_in() is False
 
+    @patch("benchling_agent.clients.browser.STORAGE_STATE_PATH")
     @patch("benchling_agent.clients.browser.parse_content")
     @patch("playwright.sync_api.sync_playwright")
-    def test_write_entry_content(self, mock_pw, mock_parse):
+    def test_write_entry_content(self, mock_pw, mock_parse, mock_path):
         _, mock_pw_instance, _, mock_context, mock_page = _mock_playwright()
         mock_pw.return_value.start.return_value = mock_pw_instance
         mock_page.url = "https://test.benchling.com/entry/etr_123/edit"
         mock_parse.return_value = []
+        mock_path.exists.return_value = True
 
         mock_editor = MagicMock()
         mock_page.locator.return_value.first = mock_editor
@@ -113,11 +115,13 @@ class TestBenchlingBrowser:
         mock_page.goto.assert_called_once()
         mock_parse.assert_called_once_with("# Heading\nSome text")
 
+    @patch("benchling_agent.clients.browser.STORAGE_STATE_PATH")
     @patch("playwright.sync_api.sync_playwright")
-    def test_write_entry_content_redirected(self, mock_pw):
+    def test_write_entry_content_redirected(self, mock_pw, mock_path):
         _, mock_pw_instance, _, mock_context, mock_page = _mock_playwright()
         mock_pw.return_value.start.return_value = mock_pw_instance
         mock_page.url = "https://sso.example.com/login"
+        mock_path.exists.return_value = True
 
         browser = BenchlingBrowser(settings=_make_settings())
         result = browser.write_entry_content(
