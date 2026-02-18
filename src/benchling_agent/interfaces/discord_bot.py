@@ -1,8 +1,9 @@
 """Discord bot interface for the Benchling Agent.
 
 Commands:
-  !write <folder_id> <prompt>   — draft and create a Benchling entry
-  !research <query>             — research a topic via Claude
+  !configure <folder_name>  — set the default Benchling folder
+  !write <prompt>           — draft and create a Benchling entry
+  !research <query>         — research a topic via Claude
 """
 
 from __future__ import annotations
@@ -38,19 +39,33 @@ def create_bot(settings: Settings) -> commands.Bot:
     async def on_ready():
         logger.info("Discord bot connected as %s", bot.user)
 
+    @bot.command(name="configure", help="Set default folder: !configure <folder name>")
+    async def configure_folder(ctx: commands.Context, *, folder_name: str) -> None:
+        try:
+            result = agent.configure_folder(folder_name)
+            await ctx.send(f"Default folder set to: **{result['name']}** (`{result['id']}`)")
+        except ValueError as e:
+            await ctx.send(f"Error: {e}")
+        except Exception:
+            logger.exception("Error configuring folder")
+            await ctx.send("Something went wrong. Check the logs.")
+
     @bot.command(name="write", help="Draft and create a Benchling entry")
-    async def write_entry(ctx: commands.Context, folder_id: str, *, prompt: str) -> None:
+    async def write_entry(ctx: commands.Context, *, prompt: str) -> None:
         await ctx.send("Drafting entry with Claude...")
         try:
-            result = agent.write_entry(prompt=prompt, folder_id=folder_id)
+            result = agent.write_entry(prompt=prompt)
             response = (
                 f"**Entry created:** {result.entry.name}\n"
                 f"**ID:** `{result.entry.id}`\n"
                 f"**URL:** {result.entry.web_url}\n"
-                f"**Tokens:** {result.draft.input_tokens} in / {result.draft.output_tokens} out\n\n"
+                f"**Tokens:** {result.draft.input_tokens} in / "
+                f"{result.draft.output_tokens} out\n\n"
                 f"**Draft:**\n```html\n{result.draft.content}\n```"
             )
             await ctx.send(_truncate(response))
+        except ValueError as e:
+            await ctx.send(f"Error: {e}")
         except Exception:
             logger.exception("Error writing entry")
             await ctx.send("Something went wrong while writing the entry. Check the logs.")

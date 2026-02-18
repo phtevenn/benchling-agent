@@ -57,16 +57,11 @@ class TestCliHelp:
 class TestWriteCommand:
     def test_requires_prompt(self):
         runner = CliRunner()
-        result = runner.invoke(cli, ["write", "--folder-id", "lib_f1"])
-        assert result.exit_code != 0
-
-    def test_requires_folder_id(self):
-        runner = CliRunner()
-        result = runner.invoke(cli, ["write", "--prompt", "test"])
+        result = runner.invoke(cli, ["write"])
         assert result.exit_code != 0
 
     @patch("benchling_agent.interfaces.cli._make_agent")
-    def test_write_success(self, mock_make_agent):
+    def test_write_success_with_folder(self, mock_make_agent):
         mock_agent = MagicMock()
         mock_make_agent.return_value = mock_agent
         mock_agent.write_entry.return_value = _stub_write_result()
@@ -85,6 +80,32 @@ class TestWriteCommand:
         )
 
     @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_write_uses_default_folder(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.write_entry.return_value = _stub_write_result()
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["write", "-p", "PCR experiment"])
+
+        assert result.exit_code == 0
+        mock_agent.write_entry.assert_called_once_with(
+            prompt="PCR experiment", folder_id=None, entry_name=None
+        )
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_write_no_folder_configured_shows_error(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.write_entry.side_effect = ValueError("No folder specified")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["write", "-p", "test"])
+
+        assert result.exit_code == 1
+        assert "No folder specified" in result.output
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
     def test_write_with_name(self, mock_make_agent):
         mock_agent = MagicMock()
         mock_make_agent.return_value = mock_agent
@@ -100,6 +121,39 @@ class TestWriteCommand:
         mock_agent.write_entry.assert_called_once_with(
             prompt="PCR experiment", folder_id="lib_f1", entry_name="My Entry"
         )
+
+
+class TestConfigureCommand:
+    def test_requires_folder(self):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["configure"])
+        assert result.exit_code != 0
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_configure_success(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.configure_folder.return_value = {"id": "lib_abc", "name": "Stephen Yu"}
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["configure", "--folder", "Stephen Yu"])
+
+        assert result.exit_code == 0
+        assert "Stephen Yu" in result.output
+        assert "lib_abc" in result.output
+        mock_agent.configure_folder.assert_called_once_with("Stephen Yu")
+
+    @patch("benchling_agent.interfaces.cli._make_agent")
+    def test_configure_no_match(self, mock_make_agent):
+        mock_agent = MagicMock()
+        mock_make_agent.return_value = mock_agent
+        mock_agent.configure_folder.side_effect = ValueError("No folders found")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["configure", "-f", "Nonexistent"])
+
+        assert result.exit_code == 1
+        assert "No folders found" in result.output
 
 
 class TestResearchCommand:

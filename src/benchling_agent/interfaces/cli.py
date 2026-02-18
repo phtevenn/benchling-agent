@@ -20,13 +20,17 @@ def cli() -> None:
 
 @cli.command()
 @click.option("--prompt", "-p", required=True, help="Description of the entry to write.")
-@click.option("--folder-id", "-f", required=True, help="Benchling folder ID for the new entry.")
+@click.option("--folder-id", "-f", default=None, help="Benchling folder ID (optional).")
 @click.option("--name", "-n", default=None, help="Entry name (defaults to truncated prompt).")
-def write(prompt: str, folder_id: str, name: str | None) -> None:
+def write(prompt: str, folder_id: str | None, name: str | None) -> None:
     """Draft and create a Benchling notebook entry."""
     agent = _make_agent()
     click.echo("Drafting entry with Claude...")
-    result = agent.write_entry(prompt=prompt, folder_id=folder_id, entry_name=name)
+    try:
+        result = agent.write_entry(prompt=prompt, folder_id=folder_id, entry_name=name)
+    except ValueError as e:
+        click.echo(f"Error: {e}")
+        raise SystemExit(1)
 
     click.echo(f"\nEntry created: {result.entry.name}")
     click.echo(f"  ID:  {result.entry.id}")
@@ -34,6 +38,19 @@ def write(prompt: str, folder_id: str, name: str | None) -> None:
     click.echo(f"\nTokens used: {result.draft.input_tokens} in / {result.draft.output_tokens} out")
     click.echo("\n--- Draft content ---")
     click.echo(result.draft.content)
+
+
+@cli.command()
+@click.option("--folder", "-f", required=True, help="Folder name to search for and set as default.")
+def configure(folder: str) -> None:
+    """Set the default Benchling folder by name."""
+    agent = _make_agent()
+    try:
+        result = agent.configure_folder(folder)
+    except ValueError as e:
+        click.echo(f"Error: {e}")
+        raise SystemExit(1)
+    click.echo(f"Default folder set to: {result['name']} ({result['id']})")
 
 
 @cli.command()
