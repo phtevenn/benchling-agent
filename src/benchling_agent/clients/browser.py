@@ -1,8 +1,8 @@
 """Browser automation for writing content into Benchling entries.
 
-Uses Playwright with a persistent browser context so OAuth sessions
+Uses Playwright with explicit storage state management so OAuth sessions
 survive between runs. On first use, call `login()` to authenticate
-interactively; subsequent calls reuse the saved session.
+interactively; the session cookies are saved to disk and reused.
 """
 
 from __future__ import annotations
@@ -16,11 +16,12 @@ from typing import TYPE_CHECKING, Any
 from benchling_agent.config import Settings
 
 if TYPE_CHECKING:
-    from playwright.sync_api import BrowserContext, Page
+    from playwright.sync_api import Browser, BrowserContext, Page
 
 logger = logging.getLogger(__name__)
 
-SESSION_DIR = Path.home() / ".benchling-agent" / "browser-session"
+STORAGE_DIR = Path.home() / ".benchling-agent"
+STORAGE_STATE_PATH = STORAGE_DIR / "browser-state.json"
 
 
 @dataclass
@@ -30,6 +31,7 @@ class BenchlingBrowser:
     settings: Settings
     headless: bool = False
     _playwright: Any = field(init=False, repr=False, default=None)
+    _browser: Browser | None = field(init=False, repr=False, default=None)
     _context: BrowserContext | None = field(init=False, repr=False, default=None)
 
     def _ensure_context(self) -> BrowserContext:
@@ -38,20 +40,32 @@ class BenchlingBrowser:
 
         from playwright.sync_api import sync_playwright
 
-        SESSION_DIR.mkdir(parents=True, exist_ok=True)
-
         self._playwright = sync_playwright().start()
-        self._context = self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(SESSION_DIR),
+        self._browser = self._playwright.chromium.launch(
             headless=self.headless,
             channel="chrome",
         )
+
+        kwargs: dict[str, Any] = {}
+        if STORAGE_STATE_PATH.exists():
+            kwargs["storage_state"] = str(STORAGE_STATE_PATH)
+
+        self._context = self._browser.new_context(**kwargs)
         return self._context
+
+    def _save_state(self) -> None:
+        if self._context:
+            STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            self._context.storage_state(path=str(STORAGE_STATE_PATH))
+            logger.info("Browser state saved to %s", STORAGE_STATE_PATH)
 
     def close(self) -> None:
         if self._context:
             self._context.close()
             self._context = None
+        if self._browser:
+            self._browser.close()
+            self._browser = None
         if self._playwright:
             self._playwright.stop()
             self._playwright = None
@@ -64,6 +78,7 @@ class BenchlingBrowser:
         """Open Benchling in a browser for manual OAuth login.
 
         Waits up to timeout_ms for the user to complete login.
+        Saves session state on success.
         Returns True if login appears successful.
         """
         page = self._get_page()
@@ -75,6 +90,7 @@ class BenchlingBrowser:
                 f"{self.settings.benchling_api_url}/**",
                 timeout=timeout_ms,
             )
+            self._save_state()
             logger.info("Login successful — session saved.")
             return True
         except Exception:
@@ -82,11 +98,15 @@ class BenchlingBrowser:
             return False
 
     def is_logged_in(self) -> bool:
-        """Quick check: navigate to Benchling and see if we land on the app."""
+        """Navigate to Benchling and check if we land on the app (not SSO)."""
+        if not STORAGE_STATE_PATH.exists():
+            return False
         page = self._get_page()
         page.goto(self.settings.benchling_api_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
-        return self.settings.benchling_api_url in page.url
+        page.wait_for_timeout(5000)
+        logged_in = self.settings.benchling_api_url in page.url
+        logger.info("Login check: url=%s, logged_in=%s", page.url, logged_in)
+        return logged_in
 
     def write_entry_content(self, entry_url: str, html_content: str) -> bool:
         """Navigate to a Benchling entry and write HTML content into it.
@@ -97,7 +117,11 @@ class BenchlingBrowser:
         logger.info("Navigating to entry: %s", entry_url)
         page.goto(entry_url, wait_until="domcontentloaded")
 
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(5000)
+
+        if self.settings.benchling_api_url not in page.url:
+            logger.warning("Redirected away from Benchling — session expired?")
+            return False
 
         editor = page.locator('[contenteditable="true"]').first
         editor.wait_for(state="visible", timeout=15_000)
