@@ -96,6 +96,40 @@ def main() -> None:
         page.wait_for_timeout(500)
         page.keyboard.press("Backspace")
 
+        # --- Toolbar dropdown buttons ---
+        # Button 11 has class mediocre-toolbar-dropdownBtn and may be the
+        # list-type selector. Click it and capture what options appear.
+        print("\n=== Toolbar dropdown buttons ===")
+        buttons = page.locator(".mediocre-toolbar button").all()
+        dropdown_indices = [
+            i for i, btn in enumerate(buttons)
+            if "dropdown" in (btn.get_attribute("class") or "")
+        ]
+        print(f"  Dropdown buttons at indices: {dropdown_indices}")
+        for idx in dropdown_indices:
+            btn = buttons[idx]
+            text = (btn.inner_text() or "").strip()
+            cls = btn.get_attribute("class") or ""
+            print(f"\n  Clicking button [{idx}] text={text!r} class={cls!r}")
+            try:
+                btn.click()
+                page.wait_for_timeout(800)
+                # Capture any open dropdown/menu
+                for sel in (".dropdown-menu", ".dropdown.open ul", "[role='menu']",
+                            "[role='listbox']", ".popover", ".tooltip"):
+                    loc = page.locator(sel)
+                    if loc.count() > 0:
+                        raw = loc.first.inner_text().strip()
+                        if raw:
+                            print(f"    Menu via {sel!r}:\n{raw}")
+                            break
+                else:
+                    print("    (no recognisable menu appeared)")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(400)
+            except Exception as e:
+                print(f"    Error: {e}")
+
         input("\nDone. Press Enter to close the browser …")
 
     finally:
