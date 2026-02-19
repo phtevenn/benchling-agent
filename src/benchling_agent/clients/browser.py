@@ -38,8 +38,6 @@ BODY_SELECTOR = (
     ":not(.hiddenFocusEditable)"
 )
 
-_TOOLBAR_INDEX_UL = 14
-_TOOLBAR_INDEX_OL = 15
 _MOD = "Meta" if platform.system() == "Darwin" else "Control"
 
 _SLASH_HEADING_MAP = {
@@ -191,15 +189,13 @@ class BenchlingBrowser:
         )
 
     def _toggle_bullet_list(self, page: Page) -> None:
-        """Enter unordered bullet list mode via toolbar button.
+        """Enter bullet list mode by typing '- ' at the start of a new line.
 
-        TODO: replace with a slash command once the exact label is confirmed
-        by running scripts/debug_editor.py against a live entry.
+        ProseMirror's inputrules detect '- ' at the start of a paragraph and
+        automatically convert it to a list item.
         """
-        buttons = page.locator(".mediocre-toolbar button").all()
-        if len(buttons) > _TOOLBAR_INDEX_UL:
-            buttons[_TOOLBAR_INDEX_UL].click()
-            page.wait_for_timeout(300)
+        page.keyboard.type("- ")
+        page.wait_for_timeout(200)
 
     def _exit_bullet_list(self, page: Page) -> None:
         """Exit the current bullet list.
@@ -217,6 +213,42 @@ class BenchlingBrowser:
         """
         page.keyboard.press("Enter")
         page.wait_for_timeout(200)
+
+    def _exit_table(self, page: Page) -> None:
+        """Exit the Benchling table widget by clicking the block after it.
+
+        Keyboard navigation cannot exit the table: Enter moves down a cell,
+        arrow keys navigate within cells, and Escape has no effect. The only
+        reliable exit is a mouse click on a non-table element inside the editor.
+        """
+        next_handle = page.evaluate_handle("""() => {
+            const tables = document.querySelectorAll('.mediocre-tableEditable');
+            if (!tables.length) return null;
+            const lastTable = tables[tables.length - 1];
+            const editor = document.querySelector(
+                'div.editable[contenteditable="true"]'
+                + ':not(.mediocre-titleEditor-titleEditable)'
+                + ':not(.hiddenFocusEditable)'
+            );
+            if (!editor) return null;
+            // Walk up from the table widget to its direct child of the editor
+            let node = lastTable;
+            while (node && node.parentElement !== editor) {
+                node = node.parentElement;
+            }
+            return node ? node.nextElementSibling : null;
+        }""")
+        element = next_handle.as_element()
+        if element is not None:
+            element.scroll_into_view_if_needed()
+            page.wait_for_timeout(300)
+            element.click()
+            page.wait_for_timeout(400)
+        else:
+            logger.warning(
+                "No element found after table — table exit may have failed. "
+                "Content following the table may be misplaced."
+            )
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
@@ -305,22 +337,10 @@ class BenchlingBrowser:
         page.keyboard.press(f"{_MOD}+V")
         page.wait_for_timeout(3000)
 
-        # Exit the table using ProseMirror-aware keyboard navigation.
-        # First Escape exits cell-editing mode (TextSelection → still in table).
-        # Second Escape selects the table as a whole node (NodeSelection).
-        # ArrowDown from a NodeSelection moves the cursor to the block
-        # immediately after the node — this is standard ProseMirror behaviour
-        # and is reliable regardless of scroll position. The Selection API
-        # approach was unreliable because ProseMirror ignores native browser
-        # selection changes; it maintains its own internal selection state.
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        page.keyboard.press("ArrowDown")
-        page.wait_for_timeout(500)
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(300)
+        # Exit the table by clicking the element immediately after it.
+        # Keyboard navigation (Escape, ArrowDown, etc.) cannot exit Benchling's
+        # table widget — those keys are all consumed internally by the widget.
+        self._exit_table(page)
 
     def _execute_actions(
         self, page: Page, actions: list[EditorAction]
