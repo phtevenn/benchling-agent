@@ -295,18 +295,36 @@ class BenchlingBrowser:
         page.keyboard.press(f"{_MOD}+V")
         page.wait_for_timeout(3000)
 
-        # Exit the table via keyboard: first Escape exits cell editing,
-        # second Escape deselects the table widget, then Cmd/Ctrl+End
-        # moves the cursor to the very end of the document (past the table),
-        # and Enter opens a fresh paragraph. This is more reliable than
-        # clicking at a pixel coordinate which can land inside the widget.
+        # Exit the table and move cursor to end of document.
+        # Escape x2: exit cell editing, then deselect the table widget.
+        # Then use the Selection API directly via JS to collapse the cursor
+        # to the very end of the editor content. This is more reliable than
+        # Cmd+End or clicking a pixel coordinate — both can misfire because
+        # Benchling's custom editor intercepts keyboard shortcuts and
+        # element.click() lands at the center of the visible viewport portion
+        # (which may be above the table).
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
-        self._refocus_editor(page)
-        page.keyboard.press(f"{_MOD}+End")
-        page.wait_for_timeout(300)
+        page.evaluate(
+            """() => {
+                const editor = document.querySelector(
+                    'div.editable[contenteditable="true"]'
+                    + ':not(.mediocre-titleEditor-titleEditable)'
+                    + ':not(.hiddenFocusEditable)'
+                );
+                if (!editor) return;
+                editor.focus();
+                const range = document.createRange();
+                range.selectNodeContents(editor);
+                range.collapse(false);   /* collapse to END */
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }"""
+        )
+        page.wait_for_timeout(500)
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
 
