@@ -44,27 +44,52 @@ def main() -> None:
             print(f"  [{i:2d}]  aria-label={aria!r:30s}  title={title!r:30s}  text={text!r:10s}  class={cls!r}")
 
         # --- Slash command options ---
+        # Reproduce the same focus sequence used in write_entry_content so
+        # the slash command actually fires.
         print("\n=== Slash command options ===")
         editor = page.locator(BODY_SELECTOR).first
         editor.wait_for(state="visible", timeout=10_000)
         editor.click()
-        page.wait_for_timeout(1000)
-        page.keyboard.type("/")
-        page.wait_for_timeout(1200)
+        page.wait_for_timeout(2000)   # match write_entry_content's post-click wait
 
-        dropdown = page.locator(".attachDropdown")
-        if dropdown.count() > 0:
-            items = dropdown.locator("li, [role='option'], .attachDropdown-item").all()
-            if items:
-                print(f"  {len(items)} options found:")
-                for item in items:
-                    print(f"    - {item.inner_text().strip()!r}")
-            else:
-                # Fallback: dump full text
-                print("  Raw dropdown text:")
-                print(f"    {dropdown.inner_text()!r}")
-        else:
-            print("  No .attachDropdown found — slash command may not have opened")
+        # Move to a fresh empty line at the end of the document
+        page.keyboard.press("Control+End")
+        page.wait_for_timeout(300)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(500)
+
+        # Type "/" to trigger the slash command menu
+        page.keyboard.type("/")
+        page.wait_for_timeout(2000)   # give it plenty of time to open
+
+        # Try multiple selectors for the dropdown
+        found = False
+        for sel in (".attachDropdown", "[data-testid='AttachDropdown-root']",
+                    "[role='listbox']", ".dropdown.open"):
+            loc = page.locator(sel)
+            if loc.count() > 0:
+                print(f"  Dropdown found via selector: {sel!r}")
+                # Grab all text from every child element
+                children = loc.locator("*").all()
+                texts = set()
+                for child in children:
+                    try:
+                        t = child.inner_text().strip()
+                        if t and len(t) < 80:   # skip long/empty strings
+                            texts.add(t)
+                    except Exception:
+                        pass
+                # Also dump raw text as fallback
+                raw = loc.inner_text().strip()
+                print(f"  Raw dropdown text:\n{raw}\n")
+                found = True
+                break
+
+        if not found:
+            print("  No dropdown found with any known selector.")
+            print("  Page URL:", page.url)
+            # Last resort: dump all visible text on the page
+            print("  Visible text sample:", page.inner_text("body")[:500])
 
         # Close the dropdown
         page.keyboard.press("Escape")
