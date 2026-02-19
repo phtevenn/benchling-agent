@@ -100,14 +100,13 @@ def main() -> None:
         page.keyboard.press("Backspace")
 
         # --- Identify list buttons ---
-        # Click each candidate button on a fresh line and check if the line
-        # becomes a list item. Undo after each attempt.
+        # Click each candidate button on a line with typed content and check
+        # whether that content ends up inside a <li> element in the DOM.
+        # (window.getSelection() is unreliable after toolbar clicks because
+        # the button briefly steals focus; DOM inspection is definitive.)
         print("\n=== Identifying list toolbar buttons ===")
-        editor = page.locator(BODY_SELECTOR).first
-        editor.click()
-        page.wait_for_timeout(500)
 
-        # Candidate indices: non-dropdown buttons after the heading dropdown [4]
+        # Candidate indices: non-dropdown icon buttons
         candidates = [5, 6, 7, 8, 9, 12, 13, 14, 15, 16]
         buttons = page.locator(".mediocre-toolbar button").all()
 
@@ -116,54 +115,62 @@ def main() -> None:
                 continue
             btn = buttons[idx]
 
-            # Move to end, fresh line
-            page.keyboard.press("Control+End")
+            # Re-focus editor before each attempt
+            editor_loc = page.locator(BODY_SELECTOR).first
+            editor_loc.click()
+            page.wait_for_timeout(300)
+
+            # Go to end of document, open a fresh line, type a unique marker
+            page.keyboard.press(f"{_MOD}+End")
             page.wait_for_timeout(200)
             page.keyboard.press("Enter")
             page.wait_for_timeout(300)
+            marker = f"TEST{idx}"
+            page.keyboard.type(marker)
+            page.wait_for_timeout(200)
 
             # Click the button
             try:
                 btn.click()
-                page.wait_for_timeout(400)
+                page.wait_for_timeout(600)
             except Exception as e:
                 print(f"  [{idx}] click error: {e}")
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(200)
+                for _ in range(4):
+                    page.keyboard.press(f"{_MOD}+Z")
+                    page.wait_for_timeout(150)
                 continue
 
-            # Check what the current line looks like in the DOM
-            # Look for list-item indicators: ul, ol, li elements in editor
-            has_list = page.evaluate("""() => {
-                const editor = document.querySelector(
-                    'div.editable[contenteditable="true"]'
-                    + ':not(.mediocre-titleEditor-titleEditable)'
-                    + ':not(.hiddenFocusEditable)'
-                );
-                if (!editor) return 'no editor';
-                const sel = window.getSelection();
-                if (!sel || !sel.anchorNode) return 'no selection';
-                let node = sel.anchorNode;
-                // Walk up to find list context
-                while (node && node !== editor) {
-                    const tag = node.nodeName ? node.nodeName.toLowerCase() : '';
-                    const cls = node.className || '';
-                    if (tag === 'li' || tag === 'ul' || tag === 'ol'
-                            || cls.includes('list') || cls.includes('bullet')) {
-                        return tag + ' class=' + cls;
+            # DOM-based check: is the marker text inside any <li>?
+            result = page.evaluate(
+                """(marker) => {
+                    const ed = document.querySelector(
+                        'div.editable[contenteditable="true"]'
+                        + ':not(.mediocre-titleEditor-titleEditable)'
+                        + ':not(.hiddenFocusEditable)'
+                    );
+                    if (!ed) return 'no editor';
+                    const lis = ed.querySelectorAll('li');
+                    for (const li of lis) {
+                        if (li.textContent.includes(marker)) {
+                            return 'IN LIST: ' + li.parentNode.nodeName
+                                + ' (li count=' + lis.length + ')';
+                        }
                     }
-                    node = node.parentNode;
-                }
-                // Report the immediate parent element class
-                let n = sel.anchorNode;
-                if (n.nodeType === 3) n = n.parentNode;
-                return 'no list — nearest: ' + n.nodeName + ' class=' + (n.className || '');
-            }""")
-            print(f"  [{idx}] → {has_list}")
+                    return 'not in list (total li: ' + lis.length + ')';
+                }""",
+                marker,
+            )
+            print(f"  [{idx}] → {result}")
 
-            # Undo and move back
-            page.keyboard.press(f"{_MOD}+Z")
+            # Close any dialog that may have opened (e.g. link dialog for [9])
+            page.keyboard.press("Escape")
             page.wait_for_timeout(200)
-            page.keyboard.press(f"{_MOD}+Z")
-            page.wait_for_timeout(200)
+            # Undo button effect + typed text + Enter
+            for _ in range(4):
+                page.keyboard.press(f"{_MOD}+Z")
+                page.wait_for_timeout(150)
 
         input("\nDone. Press Enter to close the browser …")
 
