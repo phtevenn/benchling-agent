@@ -12,10 +12,13 @@ Useful for verifying toolbar indices and slash command labels before
 updating hard-coded values in browser.py.
 """
 
+import platform
 import sys
 
 from benchling_agent.clients.browser import BODY_SELECTOR, BenchlingBrowser
 from benchling_agent.config import get_settings
+
+_MOD = "Meta" if platform.system() == "Darwin" else "Control"
 
 
 def main() -> None:
@@ -96,39 +99,71 @@ def main() -> None:
         page.wait_for_timeout(500)
         page.keyboard.press("Backspace")
 
-        # --- Toolbar dropdown buttons ---
-        # Button 11 has class mediocre-toolbar-dropdownBtn and may be the
-        # list-type selector. Click it and capture what options appear.
-        print("\n=== Toolbar dropdown buttons ===")
+        # --- Identify list buttons ---
+        # Click each candidate button on a fresh line and check if the line
+        # becomes a list item. Undo after each attempt.
+        print("\n=== Identifying list toolbar buttons ===")
+        editor = page.locator(BODY_SELECTOR).first
+        editor.click()
+        page.wait_for_timeout(500)
+
+        # Candidate indices: non-dropdown buttons after the heading dropdown [4]
+        candidates = [5, 6, 7, 8, 9, 12, 13, 14, 15, 16]
         buttons = page.locator(".mediocre-toolbar button").all()
-        dropdown_indices = [
-            i for i, btn in enumerate(buttons)
-            if "dropdown" in (btn.get_attribute("class") or "")
-        ]
-        print(f"  Dropdown buttons at indices: {dropdown_indices}")
-        for idx in dropdown_indices:
+
+        for idx in candidates:
+            if idx >= len(buttons):
+                continue
             btn = buttons[idx]
-            text = (btn.inner_text() or "").strip()
-            cls = btn.get_attribute("class") or ""
-            print(f"\n  Clicking button [{idx}] text={text!r} class={cls!r}")
+
+            # Move to end, fresh line
+            page.keyboard.press("Control+End")
+            page.wait_for_timeout(200)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(300)
+
+            # Click the button
             try:
                 btn.click()
-                page.wait_for_timeout(800)
-                # Capture any open dropdown/menu
-                for sel in (".dropdown-menu", ".dropdown.open ul", "[role='menu']",
-                            "[role='listbox']", ".popover", ".tooltip"):
-                    loc = page.locator(sel)
-                    if loc.count() > 0:
-                        raw = loc.first.inner_text().strip()
-                        if raw:
-                            print(f"    Menu via {sel!r}:\n{raw}")
-                            break
-                else:
-                    print("    (no recognisable menu appeared)")
-                page.keyboard.press("Escape")
                 page.wait_for_timeout(400)
             except Exception as e:
-                print(f"    Error: {e}")
+                print(f"  [{idx}] click error: {e}")
+                continue
+
+            # Check what the current line looks like in the DOM
+            # Look for list-item indicators: ul, ol, li elements in editor
+            has_list = page.evaluate("""() => {
+                const editor = document.querySelector(
+                    'div.editable[contenteditable="true"]'
+                    + ':not(.mediocre-titleEditor-titleEditable)'
+                    + ':not(.hiddenFocusEditable)'
+                );
+                if (!editor) return 'no editor';
+                const sel = window.getSelection();
+                if (!sel || !sel.anchorNode) return 'no selection';
+                let node = sel.anchorNode;
+                // Walk up to find list context
+                while (node && node !== editor) {
+                    const tag = node.nodeName ? node.nodeName.toLowerCase() : '';
+                    const cls = node.className || '';
+                    if (tag === 'li' || tag === 'ul' || tag === 'ol'
+                            || cls.includes('list') || cls.includes('bullet')) {
+                        return tag + ' class=' + cls;
+                    }
+                    node = node.parentNode;
+                }
+                // Report the immediate parent element class
+                let n = sel.anchorNode;
+                if (n.nodeType === 3) n = n.parentNode;
+                return 'no list — nearest: ' + n.nodeName + ' class=' + (n.className || '');
+            }""")
+            print(f"  [{idx}] → {has_list}")
+
+            # Undo and move back
+            page.keyboard.press(f"{_MOD}+Z")
+            page.wait_for_timeout(200)
+            page.keyboard.press(f"{_MOD}+Z")
+            page.wait_for_timeout(200)
 
         input("\nDone. Press Enter to close the browser …")
 
