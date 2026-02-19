@@ -215,40 +215,51 @@ class BenchlingBrowser:
         page.wait_for_timeout(200)
 
     def _exit_table(self, page: Page) -> None:
-        """Exit the Benchling table widget by clicking the block after it.
+        """Exit the Benchling table widget by clicking above it.
 
-        Keyboard navigation cannot exit the table: Enter moves down a cell,
-        arrow keys navigate within cells, and Escape has no effect. The only
-        reliable exit is a mouse click on a non-table element inside the editor.
+        Keyboard navigation (Enter, Escape, arrow keys) cannot exit the table
+        widget — those keys are consumed internally. The only exit is a mouse
+        click on non-table content inside the editor.
+
+        The table is always the last written block at the time of exit (content
+        after it hasn't been typed yet), so there is no sibling element to click
+        after the table. Instead we click just above the table (in the preceding
+        bullet list or heading), then jump to the document end so subsequent
+        content is appended after the table.
         """
-        next_handle = page.evaluate_handle("""() => {
-            const tables = document.querySelectorAll('.mediocre-tableEditable');
-            if (!tables.length) return null;
-            const lastTable = tables[tables.length - 1];
-            const editor = document.querySelector(
-                'div.editable[contenteditable="true"]'
-                + ':not(.mediocre-titleEditor-titleEditable)'
-                + ':not(.hiddenFocusEditable)'
-            );
-            if (!editor) return null;
-            // Walk up from the table widget to its direct child of the editor
-            let node = lastTable;
-            while (node && node.parentElement !== editor) {
-                node = node.parentElement;
-            }
-            return node ? node.nextElementSibling : null;
+        table_loc = page.locator(".mediocre-tableEditable").last
+
+        # Scroll so both the table and the content above it are visible
+        page.evaluate("""() => {
+            const t = document.querySelector('.mediocre-tableEditable');
+            if (t) t.scrollIntoView({block: 'center'});
         }""")
-        element = next_handle.as_element()
-        if element is not None:
-            element.scroll_into_view_if_needed()
+        page.wait_for_timeout(400)
+
+        table_box = table_loc.bounding_box()
+        if not table_box:
+            logger.warning("Table exit: cannot find table bounding box")
+            return
+
+        # If table top is too close to the viewport top, scroll down to create room
+        if table_box["y"] < 60:
+            page.evaluate("window.scrollBy(0, 150)")
             page.wait_for_timeout(300)
-            element.click()
-            page.wait_for_timeout(400)
-        else:
-            logger.warning(
-                "No element found after table — table exit may have failed. "
-                "Content following the table may be misplaced."
-            )
+            table_box = table_loc.bounding_box()
+
+        if not table_box or table_box["y"] < 30:
+            logger.warning("Table exit: insufficient space above table in viewport")
+            return
+
+        # Click 35px above the table top — lands in the preceding content
+        # (bullet list item or section heading), which is always present before
+        # a table in the entry format we generate.
+        page.mouse.click(table_box["x"] + 100, table_box["y"] - 35)
+        page.wait_for_timeout(400)
+
+        # Jump to the end of the document so the cursor is after the table
+        page.keyboard.press(f"{_MOD}+End")
+        page.wait_for_timeout(500)
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
