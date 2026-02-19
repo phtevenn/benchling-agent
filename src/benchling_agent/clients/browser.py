@@ -257,9 +257,12 @@ class BenchlingBrowser:
         page.mouse.click(table_box["x"] + 100, table_box["y"] - 35)
         page.wait_for_timeout(400)
 
-        # Jump to the end of the document so the cursor is after the table
-        page.keyboard.press(f"{_MOD}+End")
-        page.wait_for_timeout(500)
+        # ArrowDown from outside the table skips over it (atom node behaviour)
+        # and positions the cursor after it. Extra presses past the document
+        # end are no-ops, so pressing 30 times is safe for any table size.
+        for _ in range(30):
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(50)
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
