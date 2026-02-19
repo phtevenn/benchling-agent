@@ -154,13 +154,15 @@ class BenchlingBrowser:
     def _slash_command(self, page: Page, label: str) -> None:
         """Invoke a slash command by typing '/' and clicking the menu item.
 
-        Waits for the dropdown to appear rather than using a fixed delay,
-        and uses get_by_text() instead of the deprecated >> text= selector.
+        The attachDropdown is present in the DOM with class 'open' but
+        Playwright's CSS-based visibility check considers it hidden, so we
+        use a timed wait then force-click the item to bypass that check.
         """
         page.keyboard.type("/")
-        dropdown = page.locator(".attachDropdown")
-        dropdown.wait_for(state="visible", timeout=5000)
-        dropdown.get_by_text(label, exact=True).first.click()
+        page.wait_for_timeout(1000)
+        page.locator(".attachDropdown").get_by_text(label, exact=True).first.click(
+            force=True
+        )
         page.wait_for_timeout(400)
 
     def _toggle_bullet_list(self, page: Page) -> None:
