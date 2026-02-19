@@ -356,7 +356,7 @@ class BenchlingBrowser:
 
         page = self._get_page()
         logger.info("Navigating to entry: %s", entry_url)
-        page.goto(entry_url, wait_until="networkidle")
+        page.goto(entry_url, wait_until="domcontentloaded")
         logger.info("Page loaded, URL: %s", page.url)
 
         if self.settings.benchling_api_url not in page.url:

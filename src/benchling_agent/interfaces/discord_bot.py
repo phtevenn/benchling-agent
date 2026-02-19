@@ -113,7 +113,7 @@ def create_bot(settings: Settings) -> commands.Bot:
                 agent.create_entry_from_draft, session.pending_draft
             )
             session_store.clear_pending_draft(interaction.channel_id)
-            await interaction.followup.send(f"Entry created: {result.entry.web_url}")
+            await interaction.followup.send(f"Entry created: {result.web_url}")
         except Exception:
             logger.exception("Error creating entry")
             await interaction.followup.send(
