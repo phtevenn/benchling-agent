@@ -34,6 +34,28 @@ def _truncate(text: str, limit: int = MAX_DISCORD_MESSAGE_LENGTH) -> str:
     return text[: limit - 3] + "..."
 
 
+def _split_message(text: str, limit: int = MAX_DISCORD_MESSAGE_LENGTH) -> list[str]:
+    """Split text into chunks that fit within Discord's message length limit.
+
+    Tries to split on newlines to avoid cutting mid-line.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        # Find the last newline within the limit
+        split_at = text.rfind("\n", 0, limit)
+        if split_at == -1:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
+
+
 def create_bot(settings: Settings) -> commands.Bot:
     """Build and return a configured Discord bot (does not start it)."""
     intents = discord.Intents.default()
@@ -89,7 +111,8 @@ def create_bot(settings: Settings) -> commands.Bot:
             draft = await asyncio.to_thread(agent.propose_entry, session.messages)
             session_store.set_pending_draft(interaction.channel_id, draft)
             preview = f"**Draft entry preview:**\n**Title:** {draft.title}\n\n{draft.body}"
-            await interaction.followup.send(_truncate(preview))
+            for chunk in _split_message(preview):
+                await interaction.followup.send(chunk)
         except Exception:
             logger.exception("Error finalizing entry")
             await interaction.followup.send(
