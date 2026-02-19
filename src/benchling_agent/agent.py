@@ -1,12 +1,9 @@
 """Core agent orchestrator — routes user requests to the appropriate action.
 
-The agent currently supports two actions:
-  1. write  — use Claude to draft a Benchling notebook entry, then create it
-  2. research — use Claude to research a topic and return a summary
-
-The design deliberately keeps action routing simple (explicit enum) so that
-new capabilities can be added later without over-engineering an intent-
-classification layer up front.
+Supports both single-shot (CLI) and conversational (Discord) workflows:
+  - write_entry: single-prompt draft + create (used by CLI)
+  - converse / propose_entry / create_entry_from_draft: multi-turn flow
+  - research: use Claude to research a topic and return a summary
 """
 
 from __future__ import annotations
@@ -91,6 +88,66 @@ class Agent:
     def _make_entry_name(title: str) -> str:
         today = date.today().strftime("%Y.%m.%d")
         return f"{today} - {title}"
+
+    def converse(
+        self, messages: list[dict], user_message: str
+    ) -> tuple[str, list[dict]]:
+        """Send a user message and get a reply, returning updated history.
+
+        Args:
+            messages: Conversation history so far.
+            user_message: The new message from the user.
+
+        Returns:
+            Tuple of (assistant reply text, updated message list).
+        """
+        messages = [*messages, {"role": "user", "content": user_message}]
+        response = self.claude.chat(messages)
+        reply = response.content
+        messages = [*messages, {"role": "assistant", "content": reply}]
+        return reply, messages
+
+    def propose_entry(self, messages: list[dict]) -> EntryDraft:
+        """Draft an entry from conversation history without creating it.
+
+        Args:
+            messages: Conversation history to derive the entry from.
+
+        Returns:
+            An EntryDraft with title and body (nothing written to Benchling).
+        """
+        return self.claude.draft_entry_from_conversation(messages)
+
+    def create_entry_from_draft(
+        self, draft: EntryDraft, folder_id: str | None = None
+    ) -> EntryResult:
+        """Create a Benchling entry from an already-proposed draft.
+
+        Args:
+            draft: The EntryDraft returned by propose_entry().
+            folder_id: Benchling folder ID; falls back to configured default.
+
+        Returns:
+            The created EntryResult.
+        """
+        resolved_folder = self._resolve_folder_id(folder_id)
+        name = self._make_entry_name(draft.title)
+        entry = self.benchling.create_entry(name=name, folder_id=resolved_folder)
+
+        browser = None
+        try:
+            browser = BenchlingBrowser(settings=self.settings)
+            browser.write_entry_content(entry.web_url, draft.body)
+        except Exception:
+            logger.warning(
+                "Browser automation failed; entry created without body.",
+                exc_info=True,
+            )
+        finally:
+            if browser:
+                browser.close()
+
+        return entry
 
     def write_entry(
         self,
