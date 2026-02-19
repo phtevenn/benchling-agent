@@ -191,15 +191,15 @@ class BenchlingBrowser:
         )
 
     def _toggle_bullet_list(self, page: Page) -> None:
-        """Enter unordered bullet list mode via slash command.
+        """Enter unordered bullet list mode via toolbar button.
 
-        Using a slash command instead of the toolbar button avoids the
-        cycling problem: the toolbar button advances through list types
-        (○ → ■ → ● → numbered …) on every click, so repeated bullet
-        sections would each get a different marker. The slash command
-        always creates a fresh unordered list.
+        TODO: replace with a slash command once the exact label is confirmed
+        by running scripts/debug_editor.py against a live entry.
         """
-        self._slash_command(page, "Bulleted list")
+        buttons = page.locator(".mediocre-toolbar button").all()
+        if len(buttons) > _TOOLBAR_INDEX_UL:
+            buttons[_TOOLBAR_INDEX_UL].click()
+            page.wait_for_timeout(300)
 
     def _exit_bullet_list(self, page: Page) -> None:
         """Exit the current bullet list.
