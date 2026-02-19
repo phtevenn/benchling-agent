@@ -1,4 +1,4 @@
-"""Tests for the Discord bot interface."""
+"""Tests for the Discord bot interface (slash commands + on_message)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,14 @@ import pytest
 from discord.ext import commands
 
 from benchling_agent.clients.benchling import EntryResult
-from benchling_agent.clients.claude import ClaudeResponse
+from benchling_agent.clients.claude import EntryDraft
 from benchling_agent.config import Settings
-from benchling_agent.interfaces.discord_bot import MAX_DISCORD_MESSAGE_LENGTH, _truncate, create_bot
+from benchling_agent.interfaces.discord_bot import (
+    MAX_DISCORD_MESSAGE_LENGTH,
+    _truncate,
+    create_bot,
+)
+from benchling_agent.session import ConversationSession, SessionState
 
 
 def _make_settings() -> Settings:
@@ -21,6 +26,21 @@ def _make_settings() -> Settings:
         benchling_api_url="https://test.benchling.com",
         benchling_api_key="sk_test",
         discord_bot_token="test-token",
+    )
+
+
+def _stub_draft(title: str = "PCR Protocol", body: str = "# Purpose\nTest") -> EntryDraft:
+    return EntryDraft(
+        title=title, body=body, model="claude-test", input_tokens=50, output_tokens=100
+    )
+
+
+def _stub_entry_result() -> EntryResult:
+    return EntryResult(
+        id="etr_123",
+        name="PCR Protocol",
+        folder_id="lib_f1",
+        web_url="https://test.benchling.com/entry/etr_123",
     )
 
 
@@ -51,12 +71,14 @@ class TestCreateBot:
         assert isinstance(bot, commands.Bot)
 
     @patch("benchling_agent.interfaces.discord_bot.Agent")
-    def test_bot_has_commands(self, mock_agent_cls):
+    def test_bot_has_slash_commands(self, mock_agent_cls):
         bot = create_bot(_make_settings())
-        command_names = [cmd.name for cmd in bot.commands]
-        assert "write" in command_names
-        assert "research" in command_names
-        assert "configure" in command_names
+        slash_names = [cmd.name for cmd in bot.tree.get_commands()]
+        assert "configure" in slash_names
+        assert "reset" in slash_names
+        assert "finalize" in slash_names
+        assert "confirm" in slash_names
+        assert "cancel" in slash_names
 
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     def test_bot_prefix(self, mock_agent_cls):
@@ -64,22 +86,39 @@ class TestCreateBot:
         assert "!" in bot.command_prefix
 
 
+class TestResetCommand:
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_reset_clears_session(self, mock_agent_cls):
+        bot = create_bot(_make_settings())
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "reset")
+
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+
+        await cmd.callback(interaction)
+
+        interaction.response.send_message.assert_called_once()
+        msg = interaction.response.send_message.call_args.args[0]
+        assert "cleared" in msg.lower()
+
+
 class TestConfigureCommand:
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
-    async def test_configure_command(self, mock_agent_cls):
+    async def test_configure_success(self, mock_agent_cls):
         mock_agent = MagicMock()
         mock_agent_cls.return_value = mock_agent
         mock_agent.configure_folder.return_value = {"id": "lib_abc", "name": "Stephen Yu"}
 
         bot = create_bot(_make_settings())
-        cmd = bot.get_command("configure")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "configure")
 
-        ctx = AsyncMock()
-        await cmd.callback(ctx, folder_name="Stephen Yu")
+        interaction = AsyncMock()
+        await cmd.callback(interaction, folder="Stephen Yu")
 
         mock_agent.configure_folder.assert_called_once_with("Stephen Yu")
-        msg = ctx.send.call_args.args[0]
+        msg = interaction.response.send_message.call_args.args[0]
         assert "Stephen Yu" in msg
         assert "lib_abc" in msg
 
@@ -91,110 +130,184 @@ class TestConfigureCommand:
         mock_agent.configure_folder.side_effect = ValueError("No folders found")
 
         bot = create_bot(_make_settings())
-        cmd = bot.get_command("configure")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "configure")
 
-        ctx = AsyncMock()
-        await cmd.callback(ctx, folder_name="Nope")
+        interaction = AsyncMock()
+        await cmd.callback(interaction, folder="Nope")
 
-        msg = ctx.send.call_args.args[0]
+        msg = interaction.response.send_message.call_args.args[0]
         assert "No folders found" in msg
 
 
-class TestWriteCommand:
+class TestFinalizeCommand:
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
-    async def test_write_command_calls_agent(self, mock_agent_cls):
+    async def test_finalize_no_conversation(self, mock_agent_cls, mock_store_cls):
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = None
+
+        bot = create_bot(_make_settings())
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "finalize")
+
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
+
+        interaction.response.defer.assert_called_once()
+        msg = interaction.followup.send.call_args.args[0]
+        assert "no conversation" in msg.lower()
+
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_finalize_with_conversation(self, mock_agent_cls, mock_store_cls):
         mock_agent = MagicMock()
         mock_agent_cls.return_value = mock_agent
+        draft = _stub_draft()
+        mock_agent.propose_entry.return_value = draft
 
-        write_result = MagicMock()
-        write_result.draft = ClaudeResponse(
-            content="<h1>PCR</h1>", model="test", input_tokens=50, output_tokens=100
+        session = ConversationSession(
+            channel_id=42,
+            messages=[{"role": "user", "content": "plan PCR"}],
         )
-        write_result.entry = EntryResult(
-            id="etr_1", name="PCR", folder_id="f1", web_url="https://benchling.com/e/etr_1"
-        )
-        mock_agent.write_entry.return_value = write_result
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = session
 
         bot = create_bot(_make_settings())
-        write_cmd = bot.get_command("write")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "finalize")
 
-        ctx = AsyncMock()
-        await write_cmd.callback(ctx, prompt="PCR experiment")
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
 
-        mock_agent.write_entry.assert_called_once_with(prompt="PCR experiment")
-        assert ctx.send.call_count == 2
-        final_msg = ctx.send.call_args_list[1].args[0]
-        assert "https://benchling.com/e/etr_1" in final_msg
+        mock_agent.propose_entry.assert_called_once_with(session.messages)
+        mock_store.set_pending_draft.assert_called_once_with(42, draft)
+        msg = interaction.followup.send.call_args.args[0]
+        assert "PCR Protocol" in msg
 
+
+class TestConfirmCommand:
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
-    async def test_write_no_folder_configured(self, mock_agent_cls):
-        mock_agent = MagicMock()
-        mock_agent_cls.return_value = mock_agent
-        mock_agent.write_entry.side_effect = ValueError("No folder specified")
+    async def test_confirm_no_pending(self, mock_agent_cls, mock_store_cls):
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = None
 
         bot = create_bot(_make_settings())
-        write_cmd = bot.get_command("write")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "confirm")
 
-        ctx = AsyncMock()
-        await write_cmd.callback(ctx, prompt="test")
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
 
-        final_msg = ctx.send.call_args_list[-1].args[0]
-        assert "No folder specified" in final_msg
+        interaction.response.defer.assert_called_once()
+        msg = interaction.followup.send.call_args.args[0]
+        assert "no pending" in msg.lower()
 
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
-    async def test_write_command_handles_error(self, mock_agent_cls):
-        mock_agent = MagicMock()
-        mock_agent_cls.return_value = mock_agent
-        mock_agent.write_entry.side_effect = RuntimeError("API down")
-
-        bot = create_bot(_make_settings())
-        write_cmd = bot.get_command("write")
-
-        ctx = AsyncMock()
-        await write_cmd.callback(ctx, prompt="test")
-
-        final_msg = ctx.send.call_args_list[-1].args[0]
-        assert "wrong" in final_msg.lower()
-
-
-class TestResearchCommand:
-    @patch("benchling_agent.interfaces.discord_bot.Agent")
-    @pytest.mark.asyncio
-    async def test_research_command_calls_agent(self, mock_agent_cls):
+    async def test_confirm_creates_entry(self, mock_agent_cls, mock_store_cls):
         mock_agent = MagicMock()
         mock_agent_cls.return_value = mock_agent
 
-        research_result = MagicMock()
-        research_result.response = ClaudeResponse(
-            content="CRISPR summary", model="test", input_tokens=30, output_tokens=60
-        )
-        mock_agent.research.return_value = research_result
+        draft = _stub_draft()
+        entry_result = MagicMock()
+        entry_result.entry = _stub_entry_result()
+        mock_agent.create_entry_from_draft.return_value = entry_result
+
+        session = ConversationSession(channel_id=42, pending_draft=draft)
+        session.state = SessionState.PENDING_APPROVAL
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = session
 
         bot = create_bot(_make_settings())
-        research_cmd = bot.get_command("research")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "confirm")
 
-        ctx = AsyncMock()
-        await research_cmd.callback(ctx, query="CRISPR design")
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
 
-        mock_agent.research.assert_called_once_with("CRISPR design")
-        final_msg = ctx.send.call_args_list[1].args[0]
-        assert "CRISPR summary" in final_msg
+        mock_agent.create_entry_from_draft.assert_called_once_with(draft)
+        mock_store.clear_pending_draft.assert_called_once_with(42)
 
+
+class TestCancelCommand:
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
     @patch("benchling_agent.interfaces.discord_bot.Agent")
     @pytest.mark.asyncio
-    async def test_research_command_handles_error(self, mock_agent_cls):
-        mock_agent = MagicMock()
-        mock_agent_cls.return_value = mock_agent
-        mock_agent.research.side_effect = RuntimeError("API down")
+    async def test_cancel_no_pending(self, mock_agent_cls, mock_store_cls):
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = None
 
         bot = create_bot(_make_settings())
-        research_cmd = bot.get_command("research")
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "cancel")
 
-        ctx = AsyncMock()
-        await research_cmd.callback(ctx, query="test")
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
 
-        final_msg = ctx.send.call_args_list[-1].args[0]
-        assert "wrong" in final_msg.lower()
+        msg = interaction.response.send_message.call_args.args[0]
+        assert "no pending" in msg.lower()
+
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_cancel_clears_draft(self, mock_agent_cls, mock_store_cls):
+        draft = _stub_draft()
+        session = ConversationSession(channel_id=42, pending_draft=draft)
+        session.state = SessionState.PENDING_APPROVAL
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.get.return_value = session
+
+        bot = create_bot(_make_settings())
+        cmd = next(c for c in bot.tree.get_commands() if c.name == "cancel")
+
+        interaction = AsyncMock()
+        interaction.channel_id = 42
+        await cmd.callback(interaction)
+
+        mock_store.clear_pending_draft.assert_called_once_with(42)
+        msg = interaction.response.send_message.call_args.args[0]
+        assert "cancelled" in msg.lower()
+
+
+class TestOnMessage:
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_ignores_bot_messages(self, mock_agent_cls, mock_store_cls):
+        bot = create_bot(_make_settings())
+
+        message = AsyncMock()
+        message.author.bot = True
+
+        # Trigger on_message
+        for listener in bot.extra_events.get("on_message", []):
+            await listener(message)
+        # The default on_message from commands.Bot is replaced, so we call it directly
+        # Just verify no crash and no store interaction
+        mock_store_cls.return_value.get_or_create.assert_not_called()
+
+    @patch("benchling_agent.interfaces.discord_bot.SessionStore")
+    @patch("benchling_agent.interfaces.discord_bot.Agent")
+    @pytest.mark.asyncio
+    async def test_ignores_slash_commands(self, mock_agent_cls, mock_store_cls):
+        bot = create_bot(_make_settings())
+
+        message = AsyncMock()
+        message.author.bot = False
+        message.content = "/finalize"
+
+        for listener in bot.extra_events.get("on_message", []):
+            await listener(message)
+
+        mock_store_cls.return_value.get_or_create.assert_not_called()

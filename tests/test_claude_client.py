@@ -5,8 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from benchling_agent.clients.claude import (
-    ENTRY_PROMPT_TEMPLATE,
-    RESEARCH_PROMPT_TEMPLATE,
+    DRAFT_ENTRY_PROMPT,
     SYSTEM_PROMPT,
     ClaudeClient,
     ClaudeResponse,
@@ -89,40 +88,142 @@ class TestParseTitleBody:
         assert body == "# Some content"
 
 
-class TestClaudeClient:
+class TestClaudeClientChat:
     @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_draft_entry_returns_entry_draft(self, mock_anthropic_cls):
+    def test_chat_returns_claude_response(self, mock_anthropic_cls):
         mock_client = MagicMock()
         mock_anthropic_cls.return_value = mock_client
         mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: PCR Amplification\nBODY:\n# PCR Protocol\n- Step 1"
+            "Let's plan your PCR experiment."
+        )
+
+        client = ClaudeClient(settings=_make_settings())
+        messages = [{"role": "user", "content": "I want to run a PCR experiment"}]
+        result = client.chat(messages)
+
+        assert isinstance(result, ClaudeResponse)
+        assert result.content == "Let's plan your PCR experiment."
+        assert result.input_tokens == 100
+        assert result.output_tokens == 200
+
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_chat_passes_messages_to_api(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response("reply")
+
+        client = ClaudeClient(settings=_make_settings())
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+            {"role": "user", "content": "Plan my experiment"},
+        ]
+        client.chat(messages)
+
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        assert call_kwargs["system"] == SYSTEM_PROMPT
+        assert call_kwargs["model"] == "claude-test"
+        assert call_kwargs["messages"] == messages
+
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_chat_custom_max_tokens(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response("ok")
+
+        client = ClaudeClient(settings=_make_settings())
+        client.chat([{"role": "user", "content": "test"}], max_tokens=2048)
+
+        assert mock_client.messages.create.call_args.kwargs["max_tokens"] == 2048
+
+
+class TestClaudeClientDraftEntryFromConversation:
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_draft_entry_from_conversation(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: PCR Amplification\nBODY:\n"
+            "# Purpose\nAmplify target gene.\n\n"
+            "# Materials\n- Primers\n\n"
+            "# Methods\n- Run thermocycler\n\n"
+            "# Results\n"
+        )
+
+        client = ClaudeClient(settings=_make_settings())
+        messages = [
+            {"role": "user", "content": "I want to amplify a target gene via PCR"},
+            {"role": "assistant", "content": "What primers will you use?"},
+            {"role": "user", "content": "Forward and reverse primers for gene X"},
+        ]
+        result = client.draft_entry_from_conversation(messages)
+
+        assert isinstance(result, EntryDraft)
+        assert result.title == "PCR Amplification"
+        assert "# Purpose" in result.body
+        assert "# Materials" in result.body
+        assert "# Methods" in result.body
+        assert "# Results" in result.body
+
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_draft_entry_appends_drafting_prompt(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: T\nBODY:\n# Purpose\n\n# Materials\n\n# Methods\n\n# Results\n"
+        )
+
+        client = ClaudeClient(settings=_make_settings())
+        conversation = [{"role": "user", "content": "plan my experiment"}]
+        client.draft_entry_from_conversation(conversation)
+
+        call_kwargs = mock_client.messages.create.call_args.kwargs
+        sent_messages = call_kwargs["messages"]
+        # Original message plus the drafting prompt
+        assert len(sent_messages) == 2
+        assert sent_messages[0] == conversation[0]
+        assert sent_messages[1]["content"] == DRAFT_ENTRY_PROMPT
+
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_draft_entry_does_not_mutate_input(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: T\nBODY:\n# Purpose\n\n# Materials\n\n# Methods\n\n# Results\n"
+        )
+
+        client = ClaudeClient(settings=_make_settings())
+        conversation = [{"role": "user", "content": "plan my experiment"}]
+        original_len = len(conversation)
+        client.draft_entry_from_conversation(conversation)
+
+        assert len(conversation) == original_len
+
+
+class TestClaudeClientDraftEntry:
+    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
+    def test_draft_entry_convenience_wrapper(self, mock_anthropic_cls):
+        mock_client = MagicMock()
+        mock_anthropic_cls.return_value = mock_client
+        mock_client.messages.create.return_value = _mock_anthropic_response(
+            "TITLE: PCR Protocol\nBODY:\n"
+            "# Purpose\nTest\n\n# Materials\n- Items\n\n# Methods\n- Steps\n\n# Results\n"
         )
 
         client = ClaudeClient(settings=_make_settings())
         result = client.draft_entry("PCR experiment")
 
         assert isinstance(result, EntryDraft)
-        assert result.title == "PCR Amplification"
-        assert "# PCR Protocol" in result.body
-        assert result.input_tokens == 100
-        assert result.output_tokens == 200
+        assert result.title == "PCR Protocol"
 
-    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_draft_entry_calls_api_with_prompt(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\nSome body text"
-        )
-
-        client = ClaudeClient(settings=_make_settings())
-        client.draft_entry("PCR experiment")
-
+        # Should have sent a user message with the prompt, plus the drafting prompt
         call_kwargs = mock_client.messages.create.call_args.kwargs
-        assert call_kwargs["system"] == SYSTEM_PROMPT
-        assert call_kwargs["model"] == "claude-test"
-        assert "PCR experiment" in call_kwargs["messages"][0]["content"]
+        sent_messages = call_kwargs["messages"]
+        assert sent_messages[0]["content"] == "PCR experiment"
+        assert sent_messages[1]["content"] == DRAFT_ENTRY_PROMPT
 
+
+class TestClaudeClientResearch:
     @patch("benchling_agent.clients.claude.anthropic.Anthropic")
     def test_research_calls_api(self, mock_anthropic_cls):
         mock_client = MagicMock()
@@ -135,44 +236,3 @@ class TestClaudeClient:
         call_kwargs = mock_client.messages.create.call_args.kwargs
         assert "CRISPR guide RNA design" in call_kwargs["messages"][0]["content"]
         assert result.content == "CRISPR summary"
-
-    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_draft_entry_uses_entry_template(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\nBody text"
-        )
-
-        client = ClaudeClient(settings=_make_settings())
-        client.draft_entry("my experiment")
-
-        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        expected = ENTRY_PROMPT_TEMPLATE.format(prompt="my experiment")
-        assert user_msg == expected
-
-    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_research_uses_research_template(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response()
-
-        client = ClaudeClient(settings=_make_settings())
-        client.research("protein folding")
-
-        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        expected = RESEARCH_PROMPT_TEMPLATE.format(query="protein folding")
-        assert user_msg == expected
-
-    @patch("benchling_agent.clients.claude.anthropic.Anthropic")
-    def test_custom_max_tokens(self, mock_anthropic_cls):
-        mock_client = MagicMock()
-        mock_anthropic_cls.return_value = mock_client
-        mock_client.messages.create.return_value = _mock_anthropic_response(
-            "TITLE: T\nBODY:\nBody text"
-        )
-
-        client = ClaudeClient(settings=_make_settings())
-        client.draft_entry("test", max_tokens=1024)
-
-        assert mock_client.messages.create.call_args.kwargs["max_tokens"] == 1024

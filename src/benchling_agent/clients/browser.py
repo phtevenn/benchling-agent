@@ -38,8 +38,6 @@ BODY_SELECTOR = (
     ":not(.hiddenFocusEditable)"
 )
 
-_TOOLBAR_INDEX_UL = 14
-_TOOLBAR_INDEX_OL = 15
 _MOD = "Meta" if platform.system() == "Darwin" else "Control"
 
 _SLASH_HEADING_MAP = {
@@ -151,20 +149,130 @@ class BenchlingBrowser:
             if seg.bold:
                 page.keyboard.press(f"{_MOD}+B")
 
-    def _slash_command(self, page: Page, label: str) -> None:
-        """Invoke a slash command by typing '/' and clicking the menu item."""
-        page.keyboard.type("/")
-        page.wait_for_timeout(800)
-        option = page.locator(f'.attachDropdown >> text="{label}"').first
-        option.click()
-        page.wait_for_timeout(400)
+    def _refocus_editor(self, page: Page) -> None:
+        """Click the editor body to ensure keyboard focus is in the right place."""
+        editor = page.locator(BODY_SELECTOR).first
+        editor.click()
+        page.wait_for_timeout(500)
+
+    def _slash_command(self, page: Page, label: str, max_retries: int = 3) -> None:
+        """Invoke a slash command by typing '/' and clicking the menu item.
+
+        The attachDropdown is present in the DOM with class 'open' but
+        Playwright's CSS-based visibility check considers it hidden, so we
+        use force=True on click. Uses a short per-attempt timeout and retries
+        with editor re-focus so a single slow dropdown doesn't crash the run.
+        """
+        for attempt in range(max_retries):
+            page.keyboard.type("/")
+            page.wait_for_timeout(1000)
+            try:
+                page.locator(".attachDropdown").get_by_text(
+                    label, exact=True
+                ).first.click(force=True, timeout=5000)
+                page.wait_for_timeout(400)
+                return
+            except Exception:
+                logger.warning(
+                    "Slash command attempt %d/%d failed for %r — retrying",
+                    attempt + 1,
+                    max_retries,
+                    label,
+                )
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(300)
+                page.keyboard.press("Backspace")  # remove the stray "/"
+                page.wait_for_timeout(200)
+                self._refocus_editor(page)
+        raise RuntimeError(
+            f"Slash command for {label!r} failed after {max_retries} attempts"
+        )
 
     def _toggle_bullet_list(self, page: Page) -> None:
-        """Click the unordered-list toolbar button."""
-        buttons = page.locator(".mediocre-toolbar button").all()
-        if len(buttons) > _TOOLBAR_INDEX_UL:
-            buttons[_TOOLBAR_INDEX_UL].click()
+        """Enter bullet list mode by typing '- ' at the start of a new line.
+
+        ProseMirror's inputrules detect '- ' at the start of a paragraph and
+        automatically convert it to a list item.
+        """
+        page.keyboard.type("- ")
+        page.wait_for_timeout(200)
+
+    def _toggle_ordered_list(self, page: Page) -> None:
+        """Enter ordered list mode by typing '1. ' at the start of a new line.
+
+        ProseMirror's inputrules convert '1. ' to a numbered list item.
+        Subsequent items must NOT include a number prefix — pressing Enter
+        auto-increments the counter, so only the item text should be typed.
+        """
+        page.keyboard.type("1. ")
+        page.wait_for_timeout(200)
+
+    def _exit_bullet_list(self, page: Page) -> None:
+        """Exit the current bullet list.
+
+        After typing the last bullet item and pressing Enter, the cursor
+        sits on a new empty bullet. In ProseMirror (which Benchling's
+        editor is based on), pressing Enter on an empty list item at
+        indent level 0 triggers liftListItem — converting the empty item
+        to a plain paragraph outside the list. This is more reliable than
+        Backspace, which in ProseMirror typically merges the empty item
+        with the previous item and leaves the cursor inside the list.
+
+        Callers must NOT press an extra Enter after this call: the lifted
+        paragraph is already a clean empty line they can write into directly.
+        """
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(200)
+
+    def _exit_table(self, page: Page) -> None:
+        """Exit the Benchling table widget by clicking above it.
+
+        Keyboard navigation (Enter, Escape, arrow keys) cannot exit the table
+        widget — those keys are consumed internally. The only exit is a mouse
+        click on non-table content inside the editor.
+
+        The table is always the last written block at the time of exit (content
+        after it hasn't been typed yet), so there is no sibling element to click
+        after the table. Instead we click just above the table (in the preceding
+        bullet list or heading), then jump to the document end so subsequent
+        content is appended after the table.
+        """
+        table_loc = page.locator(".mediocre-tableEditable").last
+
+        # Scroll so both the table and the content above it are visible
+        page.evaluate("""() => {
+            const t = document.querySelector('.mediocre-tableEditable');
+            if (t) t.scrollIntoView({block: 'center'});
+        }""")
+        page.wait_for_timeout(400)
+
+        table_box = table_loc.bounding_box()
+        if not table_box:
+            logger.warning("Table exit: cannot find table bounding box")
+            return
+
+        # If table top is too close to the viewport top, scroll down to create room
+        if table_box["y"] < 60:
+            page.evaluate("window.scrollBy(0, 150)")
             page.wait_for_timeout(300)
+            table_box = table_loc.bounding_box()
+
+        if not table_box or table_box["y"] < 30:
+            logger.warning("Table exit: insufficient space above table in viewport")
+            return
+
+        # Click 35px above the table top — lands in the preceding content
+        # (bullet list item or section heading), which is always present before
+        # a table in the entry format we generate.
+        page.mouse.click(table_box["x"] + 100, table_box["y"] - 35)
+        page.wait_for_timeout(400)
+
+        # ArrowDown from outside the table skips over it (atom node behaviour)
+        # and positions the cursor after it. Extra presses past the document
+        # end are no-ops, so pressing 30 times is safe for any table size.
+        for _ in range(30):
+            page.keyboard.press("ArrowDown")
+            page.wait_for_timeout(50)
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
@@ -249,47 +357,47 @@ class BenchlingBrowser:
             "async (tsv) => { await navigator.clipboard.writeText(tsv); }",
             tsv,
         )
-        page.wait_for_timeout(200)
-        page.keyboard.press(f"{_MOD}+V")
-        page.wait_for_timeout(2000)
-
-        # Exit the table: click the main editor body below the table
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(300)
-        editor = page.locator(BODY_SELECTOR).first
-        # Click at the bottom of the editor to place cursor after the table
-        box = editor.bounding_box()
-        if box:
-            page.mouse.click(
-                box["x"] + box["width"] / 2,
-                box["y"] + box["height"] - 5,
-            )
         page.wait_for_timeout(500)
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(300)
+        page.keyboard.press(f"{_MOD}+V")
+        page.wait_for_timeout(3000)
+
+        # Exit the table by clicking the element immediately after it.
+        # Keyboard navigation (Escape, ArrowDown, etc.) cannot exit Benchling's
+        # table widget — those keys are all consumed internally by the widget.
+        self._exit_table(page)
 
     def _execute_actions(
         self, page: Page, actions: list[EditorAction]
     ) -> None:
         """Execute a sequence of editor actions via keyboard interactions."""
         in_bullet = False
+        in_ordered = False
         current_indent = 0
+
+        def _exit_any_list() -> None:
+            nonlocal in_bullet, in_ordered, current_indent
+            if in_bullet:
+                self._exit_bullet_list(page)
+                in_bullet = False
+            elif in_ordered:
+                self._exit_bullet_list(page)  # same mechanism: Enter on empty item
+                in_ordered = False
+            current_indent = 0
 
         for action in actions:
             if action.block_type == BlockType.BLANK:
-                if in_bullet:
-                    self._toggle_bullet_list(page)
-                    in_bullet = False
-                    current_indent = 0
+                if in_bullet or in_ordered:
+                    _exit_any_list()
+                    # _exit_bullet_list already landed on an empty paragraph;
+                    # don't press Enter again or we'd add an unwanted blank line.
+                    continue
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(150)
                 continue
 
             if action.block_type in _SLASH_HEADING_MAP:
-                if in_bullet:
-                    self._toggle_bullet_list(page)
-                    in_bullet = False
-                    current_indent = 0
+                if in_bullet or in_ordered:
+                    _exit_any_list()
                 label = _SLASH_HEADING_MAP[action.block_type]
                 self._slash_command(page, label)
                 self._type_segments(page, action.segments)
@@ -298,6 +406,8 @@ class BenchlingBrowser:
                 continue
 
             if action.block_type == BlockType.BULLET:
+                if in_ordered:
+                    _exit_any_list()
                 if not in_bullet:
                     self._toggle_bullet_list(page)
                     in_bullet = True
@@ -318,26 +428,47 @@ class BenchlingBrowser:
                 page.wait_for_timeout(150)
                 continue
 
-            if action.block_type == BlockType.TABLE:
+            if action.block_type == BlockType.ORDERED:
                 if in_bullet:
-                    self._toggle_bullet_list(page)
-                    in_bullet = False
+                    _exit_any_list()
+                if not in_ordered:
+                    self._toggle_ordered_list(page)  # types '1. ' to enter mode
+                    in_ordered = True
                     current_indent = 0
+
+                target_indent = action.indent_level
+                while current_indent < target_indent:
+                    page.keyboard.press("Tab")
+                    page.wait_for_timeout(100)
+                    current_indent += 1
+                while current_indent > target_indent:
+                    page.keyboard.press("Shift+Tab")
+                    page.wait_for_timeout(100)
+                    current_indent -= 1
+
+                # Type only the content — no number prefix. The editor
+                # auto-numbers subsequent items after the first '1. ' trigger.
+                self._type_segments(page, action.segments)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(150)
+                continue
+
+            if action.block_type == BlockType.TABLE:
+                if in_bullet or in_ordered:
+                    _exit_any_list()
                 self._write_table(page, action.table_data)
                 continue
 
             # PARAGRAPH
-            if in_bullet:
-                self._toggle_bullet_list(page)
-                in_bullet = False
-                current_indent = 0
+            if in_bullet or in_ordered:
+                _exit_any_list()
             self._type_segments(page, action.segments)
             page.keyboard.press("Enter")
             page.wait_for_timeout(150)
 
-        # Exit bullet mode if still active at the end
-        if in_bullet:
-            self._toggle_bullet_list(page)
+        # Exit any active list at the end
+        if in_bullet or in_ordered:
+            _exit_any_list()
 
     def write_entry_content(self, entry_url: str, content: str) -> bool:
         """Navigate to a Benchling entry and write formatted content.
@@ -356,7 +487,7 @@ class BenchlingBrowser:
 
         page = self._get_page()
         logger.info("Navigating to entry: %s", entry_url)
-        page.goto(entry_url, wait_until="networkidle")
+        page.goto(entry_url, wait_until="domcontentloaded")
         logger.info("Page loaded, URL: %s", page.url)
 
         if self.settings.benchling_api_url not in page.url:
@@ -372,7 +503,7 @@ class BenchlingBrowser:
         editor.wait_for(state="visible", timeout=30_000)
         logger.info("Editor found, clicking to focus...")
         editor.click()
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(2000)
 
         actions = parse_content(content)
         logger.info("Parsed %d editor actions from content", len(actions))

@@ -1,7 +1,8 @@
 """Claude (Anthropic) API client wrapper.
 
 Provides a thin, testable layer over the Anthropic SDK with
-domain-specific methods for entry writing and research.
+domain-specific methods for conversational experiment planning
+and entry drafting.
 """
 
 from __future__ import annotations
@@ -13,33 +14,29 @@ import anthropic
 from benchling_agent.config import Settings
 
 SYSTEM_PROMPT = (
-    "You are a scientific research assistant that helps write Benchling notebook entries. "
-    "You produce well-structured, precise, and reproducible experimental documentation. "
-    "When asked to write an entry, output structured markdown content. "
-    "When asked to research a topic, provide a clear summary with key findings."
+    "You are a conversational experiment planning assistant. "
+    "You help scientists plan experiments by discussing objectives, materials, "
+    "methods, and expected outcomes through a natural back-and-forth conversation. "
+    "Ask clarifying questions when details are missing. "
+    "When asked to produce a notebook entry, output structured markdown content."
 )
 
-ENTRY_PROMPT_TEMPLATE = (
-    "Write a Benchling notebook entry based on the following description.\n\n"
+DRAFT_ENTRY_PROMPT = (
+    "Based on our conversation so far, draft a Benchling notebook entry. "
     "Return your response in EXACTLY this format:\n"
     "TITLE: <a short descriptive title, under 80 characters>\n"
     "BODY:\n"
-    "<the body in markdown format>\n\n"
-    "Formatting rules for the body:\n"
-    "- Use # for Header 1, ## for Header 2, ### for Subheader\n"
-    "- Use **bold** for emphasis (e.g. section labels like **Purpose:**)\n"
-    "- Use - for bullet lists; indent with 2 spaces per nesting level\n"
-    "- Use markdown tables with | column | separators | and a header row\n"
-    "- Use blank lines to separate paragraphs and sections\n"
-    "- Do NOT use HTML tags\n\n"
-    "Description: {prompt}"
-)
-
-RESEARCH_PROMPT_TEMPLATE = (
-    "Research the following topic and provide a thorough yet concise summary "
-    "suitable for inclusion in a lab notebook. Include key findings, relevant "
-    "protocols or references where applicable.\n\n"
-    "Topic: {query}"
+    "# Purpose\n<purpose content>\n\n"
+    "# Materials\n<materials content>\n\n"
+    "# Methods\n<methods content>\n\n"
+    "# Results\n\n"
+    "Rules:\n"
+    "- The body MUST contain exactly these four top-level sections in this order: "
+    "Purpose, Materials, Methods, Results.\n"
+    "- The Results section MUST be empty (no content below the heading).\n"
+    "- Use **bold** for emphasis. Use - for bullet lists.\n"
+    "- Use markdown tables with | column | separators | where appropriate.\n"
+    "- Do NOT use HTML tags.\n"
 )
 
 TITLE_BODY_SEPARATOR = "BODY:"
@@ -76,12 +73,18 @@ class ClaudeClient:
     def __post_init__(self) -> None:
         self._client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
 
-    def _send(self, user_message: str, max_tokens: int = 4096) -> ClaudeResponse:
+    def _send(self, messages: list[dict], max_tokens: int = 4096) -> ClaudeResponse:
+        """Send a multi-turn conversation to the Anthropic API.
+
+        Args:
+            messages: List of message dicts, each with "role" and "content".
+            max_tokens: Maximum tokens in the response.
+        """
         response = self._client.messages.create(
             model=self.settings.anthropic_model,
             max_tokens=max_tokens,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_message}],
+            messages=messages,
         )
         return ClaudeResponse(
             content=response.content[0].text,
@@ -90,10 +93,34 @@ class ClaudeClient:
             output_tokens=response.usage.output_tokens,
         )
 
-    def draft_entry(self, prompt: str, max_tokens: int = 4096) -> EntryDraft:
-        """Generate a title and markdown body for a Benchling notebook entry."""
-        user_message = ENTRY_PROMPT_TEMPLATE.format(prompt=prompt)
-        response = self._send(user_message, max_tokens=max_tokens)
+    def chat(self, messages: list[dict], max_tokens: int = 4096) -> ClaudeResponse:
+        """Send a conversational message and get a reply.
+
+        Args:
+            messages: Conversation history as a list of {"role": ..., "content": ...} dicts.
+            max_tokens: Maximum tokens in the response.
+        """
+        return self._send(messages, max_tokens=max_tokens)
+
+    def draft_entry_from_conversation(
+        self, messages: list[dict], max_tokens: int = 4096
+    ) -> EntryDraft:
+        """Draft a Benchling entry from conversation history.
+
+        Appends a drafting prompt to the conversation and parses the
+        structured TITLE/BODY response. The entry always follows the
+        four-section template: Purpose, Materials, Methods, Results
+        (Results is always empty).
+
+        Args:
+            messages: Conversation history as a list of {"role": ..., "content": ...} dicts.
+            max_tokens: Maximum tokens in the response.
+        """
+        drafting_messages = [
+            *messages,
+            {"role": "user", "content": DRAFT_ENTRY_PROMPT},
+        ]
+        response = self._send(drafting_messages, max_tokens=max_tokens)
         title, body = _parse_title_body(response.content)
         return EntryDraft(
             title=title,
@@ -103,10 +130,28 @@ class ClaudeClient:
             output_tokens=response.output_tokens,
         )
 
+    def draft_entry(self, prompt: str, max_tokens: int = 4096) -> EntryDraft:
+        """Generate a title and markdown body for a Benchling notebook entry.
+
+        Convenience wrapper that creates a single-turn conversation from a prompt.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        return self.draft_entry_from_conversation(messages, max_tokens=max_tokens)
+
     def research(self, query: str, max_tokens: int = 4096) -> ClaudeResponse:
         """Research a topic and return a summary."""
-        user_message = RESEARCH_PROMPT_TEMPLATE.format(query=query)
-        return self._send(user_message, max_tokens=max_tokens)
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "Research the following topic and provide a thorough yet concise "
+                    "summary suitable for inclusion in a lab notebook. Include key "
+                    "findings, relevant protocols or references where applicable.\n\n"
+                    f"Topic: {query}"
+                ),
+            }
+        ]
+        return self._send(messages, max_tokens=max_tokens)
 
 
 def _parse_title_body(text: str) -> tuple[str, str]:

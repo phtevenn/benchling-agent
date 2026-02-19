@@ -183,6 +183,115 @@ class TestAgent:
         mock_claude.research.assert_called_once_with("CRISPR guide RNA design")
 
 
+class TestConverse:
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_converse_returns_reply_and_updated_messages(
+        self, mock_claude_cls, mock_benchling_cls
+    ):
+        mock_claude = MagicMock()
+        mock_claude_cls.return_value = mock_claude
+        mock_claude.chat.return_value = _stub_claude_response("Sure, let's plan that.")
+
+        agent = Agent(settings=_make_settings(), user_config=UserConfig())
+        messages = [{"role": "user", "content": "Hello"}]
+        reply, updated = agent.converse(messages, "Plan my PCR experiment")
+
+        assert reply == "Sure, let's plan that."
+        # Updated messages should have the new user message + assistant reply
+        assert len(updated) == 3
+        assert updated[1] == {"role": "user", "content": "Plan my PCR experiment"}
+        assert updated[2] == {"role": "assistant", "content": "Sure, let's plan that."}
+
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_converse_does_not_mutate_input(self, mock_claude_cls, mock_benchling_cls):
+        mock_claude = MagicMock()
+        mock_claude_cls.return_value = mock_claude
+        mock_claude.chat.return_value = _stub_claude_response("reply")
+
+        agent = Agent(settings=_make_settings(), user_config=UserConfig())
+        messages = [{"role": "user", "content": "Hello"}]
+        original_len = len(messages)
+        agent.converse(messages, "new message")
+        assert len(messages) == original_len
+
+
+class TestProposeEntry:
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_propose_entry_returns_draft(self, mock_claude_cls, mock_benchling_cls):
+        mock_claude = MagicMock()
+        mock_claude_cls.return_value = mock_claude
+        draft = _stub_entry_draft(title="PCR Protocol")
+        mock_claude.draft_entry_from_conversation.return_value = draft
+
+        agent = Agent(settings=_make_settings(), user_config=UserConfig())
+        messages = [{"role": "user", "content": "Plan PCR"}]
+        result = agent.propose_entry(messages)
+
+        assert result is draft
+        mock_claude.draft_entry_from_conversation.assert_called_once_with(messages)
+
+
+class TestCreateEntryFromDraft:
+    @patch("benchling_agent.agent.BenchlingBrowser")
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_create_entry_from_draft(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
+        mock_benchling = MagicMock()
+        mock_benchling_cls.return_value = mock_benchling
+        mock_benchling.create_entry.return_value = _stub_entry_result("PCR Protocol")
+
+        mock_browser = MagicMock()
+        mock_browser_cls.return_value = mock_browser
+        mock_browser.write_entry_content.return_value = True
+
+        config = UserConfig(default_folder_id="lib_f1")
+        agent = Agent(settings=_make_settings(), user_config=config)
+        draft = _stub_entry_draft(title="PCR Protocol", body="# Purpose\nTest")
+        result = agent.create_entry_from_draft(draft)
+
+        assert isinstance(result, EntryResult)
+        mock_benchling.create_entry.assert_called_once()
+        mock_browser.write_entry_content.assert_called_once()
+        mock_browser.close.assert_called_once()
+
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_create_entry_from_draft_no_folder_raises(
+        self, mock_claude_cls, mock_benchling_cls
+    ):
+        agent = Agent(settings=_make_settings(), user_config=UserConfig())
+        draft = _stub_entry_draft()
+        with pytest.raises(ValueError, match="No folder specified"):
+            agent.create_entry_from_draft(draft)
+
+    @patch("benchling_agent.agent.BenchlingBrowser")
+    @patch("benchling_agent.agent.BenchlingClient")
+    @patch("benchling_agent.agent.ClaudeClient")
+    def test_create_entry_from_draft_browser_failure(
+        self, mock_claude_cls, mock_benchling_cls, mock_browser_cls
+    ):
+        mock_benchling = MagicMock()
+        mock_benchling_cls.return_value = mock_benchling
+        mock_benchling.create_entry.return_value = _stub_entry_result()
+
+        mock_browser = MagicMock()
+        mock_browser_cls.return_value = mock_browser
+        mock_browser.write_entry_content.side_effect = RuntimeError("Browser crashed")
+
+        config = UserConfig(default_folder_id="lib_f1")
+        agent = Agent(settings=_make_settings(), user_config=config)
+        draft = _stub_entry_draft()
+        # Should not raise; entry is still created
+        result = agent.create_entry_from_draft(draft)
+        assert isinstance(result, EntryResult)
+        mock_browser.close.assert_called_once()
+
+
 class TestConfigureFolder:
     @patch("benchling_agent.user_config.UserConfig.save")
     @patch("benchling_agent.agent.BenchlingClient")

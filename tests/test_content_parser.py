@@ -136,3 +136,29 @@ class TestParseContent:
         actions = parse_content("* Item one\n* Item two")
         assert len(actions) == 2
         assert all(a.block_type == BlockType.BULLET for a in actions)
+
+    def test_ordered_list(self):
+        text = "1. First item\n2. Second item\n3. Third item"
+        actions = parse_content(text)
+        assert len(actions) == 3
+        assert all(a.block_type == BlockType.ORDERED for a in actions)
+        assert actions[0].segments[0].text == "First item"
+        assert actions[1].segments[0].text == "Second item"
+        assert actions[2].segments[0].text == "Third item"
+
+    def test_ordered_list_strips_number(self):
+        # Parser strips the leading number; browser types only the content
+        actions = parse_content("1. Only item")
+        assert actions[0].block_type == BlockType.ORDERED
+        assert actions[0].segments[0].text == "Only item"
+
+    def test_ordered_list_indent(self):
+        text = "1. Top\n   1. Nested"
+        actions = parse_content(text)
+        assert actions[0].indent_level == 0
+        assert actions[1].indent_level == 1
+
+    def test_ordered_not_confused_with_paragraph(self):
+        # Without ordered parsing '1. item' would fall through to PARAGRAPH
+        actions = parse_content("1. item")
+        assert actions[0].block_type == BlockType.ORDERED
