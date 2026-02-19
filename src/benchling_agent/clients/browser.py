@@ -191,22 +191,32 @@ class BenchlingBrowser:
         )
 
     def _toggle_bullet_list(self, page: Page) -> None:
-        """Click the unordered-list toolbar button to ENTER bullet mode."""
-        buttons = page.locator(".mediocre-toolbar button").all()
-        if len(buttons) > _TOOLBAR_INDEX_UL:
-            buttons[_TOOLBAR_INDEX_UL].click()
-            page.wait_for_timeout(300)
+        """Enter unordered bullet list mode via slash command.
+
+        Using a slash command instead of the toolbar button avoids the
+        cycling problem: the toolbar button advances through list types
+        (○ → ■ → ● → numbered …) on every click, so repeated bullet
+        sections would each get a different marker. The slash command
+        always creates a fresh unordered list.
+        """
+        self._slash_command(page, "Bulleted list")
 
     def _exit_bullet_list(self, page: Page) -> None:
         """Exit the current bullet list.
 
-        After typing a bullet item and pressing Enter, the cursor sits on a
-        new empty bullet. Pressing Backspace on that empty bullet removes it
-        and returns the cursor to a plain paragraph — without cycling through
-        other list types the way a toolbar-button toggle would.
+        After typing the last bullet item and pressing Enter, the cursor
+        sits on a new empty bullet. In ProseMirror (which Benchling's
+        editor is based on), pressing Enter on an empty list item at
+        indent level 0 triggers liftListItem — converting the empty item
+        to a plain paragraph outside the list. This is more reliable than
+        Backspace, which in ProseMirror typically merges the empty item
+        with the previous item and leaves the cursor inside the list.
+
+        Callers must NOT press an extra Enter after this call: the lifted
+        paragraph is already a clean empty line they can write into directly.
         """
-        page.keyboard.press("Backspace")
-        page.wait_for_timeout(150)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(200)
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
@@ -295,35 +305,19 @@ class BenchlingBrowser:
         page.keyboard.press(f"{_MOD}+V")
         page.wait_for_timeout(3000)
 
-        # Exit the table and move cursor to end of document.
-        # Escape x2: exit cell editing, then deselect the table widget.
-        # Then use the Selection API directly via JS to collapse the cursor
-        # to the very end of the editor content. This is more reliable than
-        # Cmd+End or clicking a pixel coordinate — both can misfire because
-        # Benchling's custom editor intercepts keyboard shortcuts and
-        # element.click() lands at the center of the visible viewport portion
-        # (which may be above the table).
+        # Exit the table using ProseMirror-aware keyboard navigation.
+        # First Escape exits cell-editing mode (TextSelection → still in table).
+        # Second Escape selects the table as a whole node (NodeSelection).
+        # ArrowDown from a NodeSelection moves the cursor to the block
+        # immediately after the node — this is standard ProseMirror behaviour
+        # and is reliable regardless of scroll position. The Selection API
+        # approach was unreliable because ProseMirror ignores native browser
+        # selection changes; it maintains its own internal selection state.
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
-        page.evaluate(
-            """() => {
-                const editor = document.querySelector(
-                    'div.editable[contenteditable="true"]'
-                    + ':not(.mediocre-titleEditor-titleEditable)'
-                    + ':not(.hiddenFocusEditable)'
-                );
-                if (!editor) return;
-                editor.focus();
-                const range = document.createRange();
-                range.selectNodeContents(editor);
-                range.collapse(false);   /* collapse to END */
-                const sel = window.getSelection();
-                sel.removeAllRanges();
-                sel.addRange(range);
-            }"""
-        )
+        page.keyboard.press("ArrowDown")
         page.wait_for_timeout(500)
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
@@ -341,6 +335,9 @@ class BenchlingBrowser:
                     self._exit_bullet_list(page)
                     in_bullet = False
                     current_indent = 0
+                    # _exit_bullet_list already landed on an empty paragraph;
+                    # don't press Enter again or we'd add an unwanted blank line.
+                    continue
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(150)
                 continue
