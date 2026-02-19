@@ -18,6 +18,7 @@ class BlockType(Enum):
     SUBHEADER = auto()
     PARAGRAPH = auto()
     BULLET = auto()
+    ORDERED = auto()
     TABLE = auto()
     BLANK = auto()
 
@@ -125,6 +126,21 @@ def parse_content(text: str) -> list[EditorAction]:
             actions.append(
                 EditorAction(
                     block_type=BlockType.BULLET,
+                    segments=segments,
+                    indent_level=indent_level,
+                )
+            )
+            i += 1
+            continue
+
+        ordered_match = re.match(r"^(\s*)\d+\.\s+(.*)$", line)
+        if ordered_match:
+            indent_str, content = ordered_match.groups()
+            indent_level = len(indent_str) // 2
+            segments = parse_inline(content)
+            actions.append(
+                EditorAction(
+                    block_type=BlockType.ORDERED,
                     segments=segments,
                     indent_level=indent_level,
                 )

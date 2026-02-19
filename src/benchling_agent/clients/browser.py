@@ -197,6 +197,16 @@ class BenchlingBrowser:
         page.keyboard.type("- ")
         page.wait_for_timeout(200)
 
+    def _toggle_ordered_list(self, page: Page) -> None:
+        """Enter ordered list mode by typing '1. ' at the start of a new line.
+
+        ProseMirror's inputrules convert '1. ' to a numbered list item.
+        Subsequent items must NOT include a number prefix — pressing Enter
+        auto-increments the counter, so only the item text should be typed.
+        """
+        page.keyboard.type("1. ")
+        page.wait_for_timeout(200)
+
     def _exit_bullet_list(self, page: Page) -> None:
         """Exit the current bullet list.
 
@@ -361,14 +371,23 @@ class BenchlingBrowser:
     ) -> None:
         """Execute a sequence of editor actions via keyboard interactions."""
         in_bullet = False
+        in_ordered = False
         current_indent = 0
+
+        def _exit_any_list() -> None:
+            nonlocal in_bullet, in_ordered, current_indent
+            if in_bullet:
+                self._exit_bullet_list(page)
+                in_bullet = False
+            elif in_ordered:
+                self._exit_bullet_list(page)  # same mechanism: Enter on empty item
+                in_ordered = False
+            current_indent = 0
 
         for action in actions:
             if action.block_type == BlockType.BLANK:
-                if in_bullet:
-                    self._exit_bullet_list(page)
-                    in_bullet = False
-                    current_indent = 0
+                if in_bullet or in_ordered:
+                    _exit_any_list()
                     # _exit_bullet_list already landed on an empty paragraph;
                     # don't press Enter again or we'd add an unwanted blank line.
                     continue
@@ -377,10 +396,8 @@ class BenchlingBrowser:
                 continue
 
             if action.block_type in _SLASH_HEADING_MAP:
-                if in_bullet:
-                    self._exit_bullet_list(page)
-                    in_bullet = False
-                    current_indent = 0
+                if in_bullet or in_ordered:
+                    _exit_any_list()
                 label = _SLASH_HEADING_MAP[action.block_type]
                 self._slash_command(page, label)
                 self._type_segments(page, action.segments)
@@ -389,8 +406,10 @@ class BenchlingBrowser:
                 continue
 
             if action.block_type == BlockType.BULLET:
+                if in_ordered:
+                    _exit_any_list()
                 if not in_bullet:
-                    self._toggle_bullet_list(page)  # enter bullet mode
+                    self._toggle_bullet_list(page)
                     in_bullet = True
                     current_indent = 0
 
@@ -409,26 +428,47 @@ class BenchlingBrowser:
                 page.wait_for_timeout(150)
                 continue
 
-            if action.block_type == BlockType.TABLE:
+            if action.block_type == BlockType.ORDERED:
                 if in_bullet:
-                    self._exit_bullet_list(page)
-                    in_bullet = False
+                    _exit_any_list()
+                if not in_ordered:
+                    self._toggle_ordered_list(page)  # types '1. ' to enter mode
+                    in_ordered = True
                     current_indent = 0
+
+                target_indent = action.indent_level
+                while current_indent < target_indent:
+                    page.keyboard.press("Tab")
+                    page.wait_for_timeout(100)
+                    current_indent += 1
+                while current_indent > target_indent:
+                    page.keyboard.press("Shift+Tab")
+                    page.wait_for_timeout(100)
+                    current_indent -= 1
+
+                # Type only the content — no number prefix. The editor
+                # auto-numbers subsequent items after the first '1. ' trigger.
+                self._type_segments(page, action.segments)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(150)
+                continue
+
+            if action.block_type == BlockType.TABLE:
+                if in_bullet or in_ordered:
+                    _exit_any_list()
                 self._write_table(page, action.table_data)
                 continue
 
             # PARAGRAPH
-            if in_bullet:
-                self._exit_bullet_list(page)
-                in_bullet = False
-                current_indent = 0
+            if in_bullet or in_ordered:
+                _exit_any_list()
             self._type_segments(page, action.segments)
             page.keyboard.press("Enter")
             page.wait_for_timeout(150)
 
-        # Exit bullet mode if still active at the end
-        if in_bullet:
-            self._exit_bullet_list(page)
+        # Exit any active list at the end
+        if in_bullet or in_ordered:
+            _exit_any_list()
 
     def write_entry_content(self, entry_url: str, content: str) -> bool:
         """Navigate to a Benchling entry and write formatted content.
