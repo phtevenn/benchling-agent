@@ -152,19 +152,34 @@ class BenchlingBrowser:
                 page.keyboard.press(f"{_MOD}+B")
 
     def _slash_command(self, page: Page, label: str) -> None:
-        """Invoke a slash command by typing '/' and clicking the menu item."""
+        """Invoke a slash command by typing '/' and clicking the menu item.
+
+        Waits for the dropdown to appear rather than using a fixed delay,
+        and uses get_by_text() instead of the deprecated >> text= selector.
+        """
         page.keyboard.type("/")
-        page.wait_for_timeout(800)
-        option = page.locator(f'.attachDropdown >> text="{label}"').first
-        option.click()
+        dropdown = page.locator(".attachDropdown")
+        dropdown.wait_for(state="visible", timeout=5000)
+        dropdown.get_by_text(label, exact=True).first.click()
         page.wait_for_timeout(400)
 
     def _toggle_bullet_list(self, page: Page) -> None:
-        """Click the unordered-list toolbar button."""
+        """Click the unordered-list toolbar button to ENTER bullet mode."""
         buttons = page.locator(".mediocre-toolbar button").all()
         if len(buttons) > _TOOLBAR_INDEX_UL:
             buttons[_TOOLBAR_INDEX_UL].click()
             page.wait_for_timeout(300)
+
+    def _exit_bullet_list(self, page: Page) -> None:
+        """Exit the current bullet list.
+
+        After typing a bullet item and pressing Enter, the cursor sits on a
+        new empty bullet. Pressing Backspace on that empty bullet removes it
+        and returns the cursor to a plain paragraph — without cycling through
+        other list types the way a toolbar-button toggle would.
+        """
+        page.keyboard.press("Backspace")
+        page.wait_for_timeout(150)
 
     def _right_click_col(self, page: Page, col_index: int) -> None:
         """Scroll a column header into view and right-click it."""
@@ -278,7 +293,7 @@ class BenchlingBrowser:
         for action in actions:
             if action.block_type == BlockType.BLANK:
                 if in_bullet:
-                    self._toggle_bullet_list(page)
+                    self._exit_bullet_list(page)
                     in_bullet = False
                     current_indent = 0
                 page.keyboard.press("Enter")
@@ -287,7 +302,7 @@ class BenchlingBrowser:
 
             if action.block_type in _SLASH_HEADING_MAP:
                 if in_bullet:
-                    self._toggle_bullet_list(page)
+                    self._exit_bullet_list(page)
                     in_bullet = False
                     current_indent = 0
                 label = _SLASH_HEADING_MAP[action.block_type]
@@ -299,7 +314,7 @@ class BenchlingBrowser:
 
             if action.block_type == BlockType.BULLET:
                 if not in_bullet:
-                    self._toggle_bullet_list(page)
+                    self._toggle_bullet_list(page)  # enter bullet mode
                     in_bullet = True
                     current_indent = 0
 
@@ -320,7 +335,7 @@ class BenchlingBrowser:
 
             if action.block_type == BlockType.TABLE:
                 if in_bullet:
-                    self._toggle_bullet_list(page)
+                    self._exit_bullet_list(page)
                     in_bullet = False
                     current_indent = 0
                 self._write_table(page, action.table_data)
@@ -328,7 +343,7 @@ class BenchlingBrowser:
 
             # PARAGRAPH
             if in_bullet:
-                self._toggle_bullet_list(page)
+                self._exit_bullet_list(page)
                 in_bullet = False
                 current_indent = 0
             self._type_segments(page, action.segments)
@@ -337,7 +352,7 @@ class BenchlingBrowser:
 
         # Exit bullet mode if still active at the end
         if in_bullet:
-            self._toggle_bullet_list(page)
+            self._exit_bullet_list(page)
 
     def write_entry_content(self, entry_url: str, content: str) -> bool:
         """Navigate to a Benchling entry and write formatted content.
@@ -372,7 +387,7 @@ class BenchlingBrowser:
         editor.wait_for(state="visible", timeout=30_000)
         logger.info("Editor found, clicking to focus...")
         editor.click()
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(2000)
 
         actions = parse_content(content)
         logger.info("Parsed %d editor actions from content", len(actions))
