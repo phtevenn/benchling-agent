@@ -75,7 +75,11 @@ class BenchlingBrowser:
         if STORAGE_STATE_PATH.exists():
             kwargs["storage_state"] = str(STORAGE_STATE_PATH)
 
-        self._context = self._browser.new_context(**kwargs)
+        self._context = self._browser.new_context(
+            permissions=["clipboard-read", "clipboard-write"],
+            viewport={"width": 1920, "height": 1080},
+            **kwargs,
+        )
         return self._context
 
     def _save_state(self) -> None:
@@ -151,7 +155,7 @@ class BenchlingBrowser:
         """Invoke a slash command by typing '/' and clicking the menu item."""
         page.keyboard.type("/")
         page.wait_for_timeout(800)
-        option = page.locator(f".attachDropdown >> text=\"{label}\"").first
+        option = page.locator(f'.attachDropdown >> text="{label}"').first
         option.click()
         page.wait_for_timeout(400)
 
@@ -162,35 +166,107 @@ class BenchlingBrowser:
             buttons[_TOOLBAR_INDEX_UL].click()
             page.wait_for_timeout(300)
 
-    def _write_table(self, page: Page, table_data: list[list[str]]) -> None:
-        """Write table data as formatted text.
+    def _right_click_col(self, page: Page, col_index: int) -> None:
+        """Scroll a column header into view and right-click it."""
+        col = page.locator(
+            f'[data-testid="TableAxisCell-columnheader-{col_index}"]'
+        )
+        col.scroll_into_view_if_needed()
+        page.wait_for_timeout(300)
+        col.click(button="right")
+        page.wait_for_timeout(600)
 
-        Uses bold for the header row and tab-aligned columns.
-        Benchling's native table widget is complex to automate, so we
-        render the data as readable text for now.
+    def _click_ctx_item(self, page: Page, label: str) -> None:
+        """Click a context menu item via JS to bypass visibility checks."""
+        page.evaluate(
+            """(label) => {
+                const items = document.querySelectorAll(
+                    '.contextMenu .context-item'
+                );
+                for (const item of items) {
+                    if (item.textContent.trim() === label) {
+                        item.dispatchEvent(
+                            new MouseEvent('click', {bubbles: true})
+                        );
+                        return;
+                    }
+                }
+            }""",
+            label,
+        )
+        page.wait_for_timeout(400)
+
+    def _write_table(self, page: Page, table_data: list[list[str]]) -> None:
+        """Insert a Benchling table widget and populate it via TSV paste.
+
+        table_data[0] is the header row (used for column names).
+        table_data[1:] are data rows.
         """
-        if not table_data:
+        if not table_data or len(table_data) < 2:
             return
 
-        col_widths = [0] * max(len(r) for r in table_data)
-        for row in table_data:
-            for i, cell in enumerate(row):
-                if i < len(col_widths):
-                    col_widths[i] = max(col_widths[i], len(cell))
+        header = table_data[0]
+        data_rows = table_data[1:]
+        num_cols = len(header)
+        num_data_rows = len(data_rows)
 
-        for row_idx, row in enumerate(table_data):
-            parts = [cell.ljust(col_widths[i]) for i, cell in enumerate(row)]
-            line_text = "  |  ".join(parts)
+        self._slash_command(page, "Table")
+        page.wait_for_timeout(2000)
 
-            if row_idx == 0:
-                page.keyboard.press(f"{_MOD}+B")
-                page.keyboard.type(line_text)
-                page.keyboard.press(f"{_MOD}+B")
-            else:
-                page.keyboard.type(line_text)
+        # Add extra columns (default table has 2)
+        for i in range(max(0, num_cols - 2)):
+            self._right_click_col(page, 1 + i)
+            self._click_ctx_item(page, "Insert column right")
+            page.wait_for_timeout(400)
 
+        # Rename columns to header values
+        for i, name in enumerate(header):
+            self._right_click_col(page, i)
+            self._click_ctx_item(page, "Rename column")
+            page.wait_for_timeout(300)
+            page.keyboard.type(name)
             page.keyboard.press("Enter")
-            page.wait_for_timeout(100)
+            page.wait_for_timeout(400)
+
+        # Add extra rows (default table has 2)
+        extra = num_data_rows - 2
+        if extra > 0:
+            add_input = page.locator(
+                ".mediocre-tableEditable-addRowInput"
+            ).first
+            add_input.fill(str(extra))
+            page.wait_for_timeout(200)
+            page.locator('button:text("Add rows")').first.click()
+            page.wait_for_timeout(800)
+
+        # Build TSV string and paste into first cell
+        tsv = "\n".join("\t".join(row) for row in data_rows)
+        first_cell = page.locator("td.cell.cell-contents").first
+        first_cell.click()
+        page.wait_for_timeout(400)
+
+        page.evaluate(
+            "async (tsv) => { await navigator.clipboard.writeText(tsv); }",
+            tsv,
+        )
+        page.wait_for_timeout(200)
+        page.keyboard.press(f"{_MOD}+V")
+        page.wait_for_timeout(2000)
+
+        # Exit the table: click the main editor body below the table
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        editor = page.locator(BODY_SELECTOR).first
+        # Click at the bottom of the editor to place cursor after the table
+        box = editor.bounding_box()
+        if box:
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] - 5,
+            )
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(300)
 
     def _execute_actions(
         self, page: Page, actions: list[EditorAction]
