@@ -151,19 +151,44 @@ class BenchlingBrowser:
             if seg.bold:
                 page.keyboard.press(f"{_MOD}+B")
 
-    def _slash_command(self, page: Page, label: str) -> None:
+    def _refocus_editor(self, page: Page) -> None:
+        """Click the editor body to ensure keyboard focus is in the right place."""
+        editor = page.locator(BODY_SELECTOR).first
+        editor.click()
+        page.wait_for_timeout(500)
+
+    def _slash_command(self, page: Page, label: str, max_retries: int = 3) -> None:
         """Invoke a slash command by typing '/' and clicking the menu item.
 
         The attachDropdown is present in the DOM with class 'open' but
         Playwright's CSS-based visibility check considers it hidden, so we
-        use a timed wait then force-click the item to bypass that check.
+        use force=True on click. Uses a short per-attempt timeout and retries
+        with editor re-focus so a single slow dropdown doesn't crash the run.
         """
-        page.keyboard.type("/")
-        page.wait_for_timeout(1000)
-        page.locator(".attachDropdown").get_by_text(label, exact=True).first.click(
-            force=True
+        for attempt in range(max_retries):
+            page.keyboard.type("/")
+            page.wait_for_timeout(1000)
+            try:
+                page.locator(".attachDropdown").get_by_text(
+                    label, exact=True
+                ).first.click(force=True, timeout=5000)
+                page.wait_for_timeout(400)
+                return
+            except Exception:
+                logger.warning(
+                    "Slash command attempt %d/%d failed for %r — retrying",
+                    attempt + 1,
+                    max_retries,
+                    label,
+                )
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(300)
+                page.keyboard.press("Backspace")  # remove the stray "/"
+                page.wait_for_timeout(200)
+                self._refocus_editor(page)
+        raise RuntimeError(
+            f"Slash command for {label!r} failed after {max_retries} attempts"
         )
-        page.wait_for_timeout(400)
 
     def _toggle_bullet_list(self, page: Page) -> None:
         """Click the unordered-list toolbar button to ENTER bullet mode."""
@@ -266,22 +291,22 @@ class BenchlingBrowser:
             "async (tsv) => { await navigator.clipboard.writeText(tsv); }",
             tsv,
         )
-        page.wait_for_timeout(200)
+        page.wait_for_timeout(500)
         page.keyboard.press(f"{_MOD}+V")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(3000)
 
-        # Exit the table: click the main editor body below the table
+        # Exit the table via keyboard: first Escape exits cell editing,
+        # second Escape deselects the table widget, then Cmd/Ctrl+End
+        # moves the cursor to the very end of the document (past the table),
+        # and Enter opens a fresh paragraph. This is more reliable than
+        # clicking at a pixel coordinate which can land inside the widget.
         page.keyboard.press("Escape")
         page.wait_for_timeout(300)
-        editor = page.locator(BODY_SELECTOR).first
-        # Click at the bottom of the editor to place cursor after the table
-        box = editor.bounding_box()
-        if box:
-            page.mouse.click(
-                box["x"] + box["width"] / 2,
-                box["y"] + box["height"] - 5,
-            )
-        page.wait_for_timeout(500)
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(300)
+        self._refocus_editor(page)
+        page.keyboard.press(f"{_MOD}+End")
+        page.wait_for_timeout(300)
         page.keyboard.press("Enter")
         page.wait_for_timeout(300)
 
